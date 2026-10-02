@@ -1,0 +1,56 @@
+[package]
+name = "aegis-tool"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "CLI for aegis SSH login, SSH access, install, and enrollment workflows."
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+keywords = ["cli", "ssh", "oauth", "certificate", "remote-access"]
+
+[[bin]]
+name = "aegis"
+path = "src/main.rs"
+
+[dependencies]
+aegis-types = { workspace = true }
+capulus = { workspace = true, features = ["managed-system"] }
+phylax-core = { workspace = true }
+phylax-gcp = { workspace = true }
+phylax-oidc = { workspace = true }
+arche-firestore = { workspace = true }
+
+anyhow = { workspace = true }
+firestore = "0.53"
+rcgen = { version = "0.14", features = ["x509-parser"] }
+time = "0.3"
+uuid = { workspace = true }
+x509-parser = "0.18"
+axum = "0.8"
+base64 = { workspace = true }
+clap = { workspace = true }
+crossterm = { version = "0.29", default-features = false, features = ["events"] }
+dialoguer = "0.12"
+futures-util = "0.3"
+libc = "0.2"
+oauth2 = { workspace = true, features = ["reqwest-blocking", "rustls-tls"] }
+qrcode = { version = "0.14", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+rustix = { version = "1", features = ["process"] }
+hickory-resolver = { version = "0.26", default-features = false, features = ["tokio"] }
+rtnetlink = "0.23"
+semver = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.11"
+ssh-key = { version = "0.6", features = ["ed25519", "rand_core", "std"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "time"] }
+toml = "1"
+url = { workspace = true }
+webbrowser = "1"
+
+[dev-dependencies]
+vt100 = "0.16"

@@ -1,0 +1,42 @@
+[package]
+name = "aegis-api"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+readme = "README.md"
+repository.workspace = true
+description = "Independent Aegis fleet control plane HTTP service."
+
+[dependencies]
+arche-firestore = { workspace = true }
+phylax-oidc = { workspace = true }
+aegis-types = { workspace = true }
+arche-web = { workspace = true }
+phylax-core = { workspace = true }
+phylax-gcp = { workspace = true }
+
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+base64 = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+firestore = "0.53"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rcgen = { version = "0.14", features = ["x509-parser"] }
+semver = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.11"
+ssh-key = { version = "0.6", features = ["ed25519", "rand_core", "serde", "encryption"] }
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros", "serde"] }
+tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "time"] }
+tracing = "0.1"
+url = { workspace = true }
+x509-parser = "0.18"
+
+[dev-dependencies]
+gcloud-sdk = "0.31"
+tower = { version = "0.5", features = ["util"] }

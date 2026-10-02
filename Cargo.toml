@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["aegis-types", "aegis-api", "aegis-tool"]
+
+[workspace.package]
+version = "0.2.0"
+authors = ["Keeley Hoek <keeley@hoek.io>"]
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = ["crates-io"]
+repository = "https://github.com/khoek/aegis"
+
+[workspace.dependencies]
+aegis-types = { path = "aegis-types", version = "0.2" }
+
+phylax-oidc = "0.1"
+arche-web = "0.1"
+arche-firestore = "0.1"
+capulus = "0.6"
+phylax-core = "0.1"
+phylax-gcp = "0.1"
+
+anyhow = "1"
+base64 = "0.23"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.18"
+oauth2 = { version = "5", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
