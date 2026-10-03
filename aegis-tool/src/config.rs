@@ -6,14 +6,14 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aegis_types::{HostAlias, HostAliases, HostId};
+use aegis_dto::{HostAlias, HostAliases, HostId};
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use capulus::paths;
 use capulus::store::{atomic_write, ensure_directory, tighten_file_permissions};
 use serde::{Deserialize, Serialize};
 
-pub type CachedNetworkConfig = aegis_types::v1::AegisNetworkConfig;
+pub type CachedNetworkConfig = aegis_dto::v1::AegisNetworkConfig;
 pub const SHARED_CACHE_PATH: &str = "/var/lib/aegis/cache.json";
 pub const AEGIS_AGENT_SOCKET_PATH: &str = "/run/aegis/agent.sock";
 pub const AGENT_CONTEXT_PATH: &str = "/var/lib/aegis/context.json";
@@ -81,9 +81,9 @@ impl AgentContext {
     }
 }
 
-pub(crate) fn namespace_endpoint(api_base: &str) -> Result<aegis_types::namespace::ApiEndpoint> {
+pub(crate) fn namespace_endpoint(api_base: &str) -> Result<aegis_dto::namespace::ApiEndpoint> {
     let endpoint =
-        aegis_types::namespace::ApiEndpoint::parse(api_base).map_err(anyhow::Error::msg)?;
+        aegis_dto::namespace::ApiEndpoint::parse(api_base).map_err(anyhow::Error::msg)?;
     endpoint.require_namespace().map_err(anyhow::Error::msg)?;
     Ok(endpoint)
 }
@@ -93,11 +93,11 @@ pub struct CachedHost {
     pub host_id: HostId,
     pub aliases: HostAliases,
     #[serde(flatten)]
-    pub host: aegis_types::v1::AegisNetworkHost,
+    pub host: aegis_dto::v1::AegisNetworkHost,
 }
 
 impl CachedHost {
-    pub fn alias(&self) -> &aegis_types::HostAlias {
+    pub fn alias(&self) -> &aegis_dto::HostAlias {
         self.aliases.primary()
     }
 
@@ -134,7 +134,7 @@ impl CachedHost {
 }
 
 impl Deref for CachedHost {
-    type Target = aegis_types::v1::AegisNetworkHost;
+    type Target = aegis_dto::v1::AegisNetworkHost;
 
     fn deref(&self) -> &Self::Target {
         &self.host
@@ -150,14 +150,14 @@ impl DerefMut for CachedHost {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedInventory {
     pub api_base: String,
-    pub hosts: BTreeMap<HostId, aegis_types::v1::AegisHost>,
+    pub hosts: BTreeMap<HostId, aegis_dto::v1::AegisHost>,
     pub networks: BTreeMap<String, CachedNetwork>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedNetwork {
     pub config: CachedNetworkConfig,
-    pub members: BTreeMap<HostId, aegis_types::v1::AegisNetworkMember>,
+    pub members: BTreeMap<HostId, aegis_dto::v1::AegisNetworkMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,7 +182,7 @@ impl CachedInventory {
             hosts.push(CachedHost {
                 host_id: *host_id,
                 aliases: host.aliases.clone(),
-                host: aegis_types::v1::AegisNetworkHost::resolve(host, member.clone()),
+                host: aegis_dto::v1::AegisNetworkHost::resolve(host, member.clone()),
             });
         }
         Ok(Some(ResolvedNetwork {
@@ -445,7 +445,7 @@ pub fn resolve_api_base(
         Some(value) => value.to_owned(),
         None => UserContext::load()?.context("No Aegis deployment selected. Run `aegis-admin setup`, select an enrollment file, or pass --api-base once.")?.api_base,
     };
-    Ok(aegis_types::namespace::ApiEndpoint::parse(&selected)
+    Ok(aegis_dto::namespace::ApiEndpoint::parse(&selected)
         .map_err(anyhow::Error::msg)?
         .base_url())
 }
@@ -503,7 +503,7 @@ pub(crate) fn load_cached_inventory_for_endpoint(
 }
 
 pub fn load_all_hosts(path: &Path) -> Result<Vec<CachedHost>> {
-    load_all_hosts_for_network(path, aegis_types::DEFAULT_AEGIS_NETWORK)
+    load_all_hosts_for_network(path, aegis_dto::DEFAULT_AEGIS_NETWORK)
 }
 
 pub fn load_cached_network(path: &Path, network: &str) -> Result<Option<ResolvedNetwork>> {
@@ -668,13 +668,13 @@ mod tests {
             host_id: "00000000-0000-4000-8000-000000000001"
                 .parse()
                 .expect("host id"),
-            aliases: aegis_types::HostAliases::new(vec![
-                aegis_types::HostAlias::parse("alpha").expect("alias"),
+            aliases: aegis_dto::HostAliases::new(vec![
+                aegis_dto::HostAlias::parse("alpha").expect("alias"),
             ])
             .expect("aliases"),
-            host: aegis_types::v1::AegisNetworkHost {
-                mode: aegis_types::AegisHostMode::Leaf,
-                ssh: Some(aegis_types::v1::AegisNetworkHostSsh {
+            host: aegis_dto::v1::AegisNetworkHost {
+                mode: aegis_dto::AegisHostMode::Leaf,
+                ssh: Some(aegis_dto::v1::AegisNetworkHostSsh {
                     port: Some(22),
                     public_key: Some("ssh-ed25519 AAAA test".to_string()),
                     internal_principals: vec![
@@ -684,7 +684,7 @@ mod tests {
                     ],
                     external_principals: vec![],
                 }),
-                wireguard: Some(aegis_types::v1::AegisNetworkMemberWireGuard {
+                wireguard: Some(aegis_dto::v1::AegisNetworkMemberWireGuard {
                     public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
                     ipv4: "10.0.0.42".to_string(),
                     ipv6: "fd75::2a".to_string(),
@@ -695,7 +695,7 @@ mod tests {
                 messages: Vec::new(),
                 agent: None,
                 ssh_lockdown_enabled: false,
-                observed_public_ips: aegis_types::v1::AegisObservedPublicIps::default(),
+                observed_public_ips: aegis_dto::v1::AegisObservedPublicIps::default(),
                 transient: false,
                 pending: false,
                 updated_unix: 10,
@@ -706,7 +706,7 @@ mod tests {
         host.ssh.as_mut().expect("ssh config").port = Some(2200);
         assert_eq!("10.0.0.42:2200", host.host_label());
 
-        host.internal = Some(aegis_types::v1::AegisNetworkMemberInternalAddresses {
+        host.internal = Some(aegis_dto::v1::AegisNetworkMemberInternalAddresses {
             ipv4: "10.75.0.42".to_string(),
             ipv6: "fd75::2a".to_string(),
         });

@@ -9,7 +9,7 @@ use crate::{
 
 pub(super) fn run(api_base_override: Option<&str>, args: &NamespaceArgs) -> Result<i32> {
     let base = resolve_api_base(api_base_override, installed_agent_api_base()?.as_deref())?;
-    let endpoint = aegis_types::namespace::ApiEndpoint::parse(&base).map_err(anyhow::Error::msg)?;
+    let endpoint = aegis_dto::namespace::ApiEndpoint::parse(&base).map_err(anyhow::Error::msg)?;
     let endpoint = match &args.command {
         NamespaceCommands::Use { namespace } => endpoint.with_namespace(namespace.clone()),
         NamespaceCommands::Show => endpoint,

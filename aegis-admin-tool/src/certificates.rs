@@ -1,4 +1,4 @@
-use aegis_types::{NamespaceId, configuration::TlsCaConfig};
+use aegis_dto::{NamespaceId, configuration::TlsCaConfig};
 use anyhow::Context;
 use arche_firestore::{
     Db, create_typed_at, is_firestore_data_conflict, load_optional_typed_at, normalized_text,

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases,
     v1::{AegisEnrollmentCreateRequest, AegisEnrollmentCredentialResponse, AegisEnrollmentSsh},
 };
@@ -49,7 +49,7 @@ pub fn reserve(
     api: &mut AuthenticatedApiClient,
     alias: HostAlias,
     mode: AegisHostMode,
-) -> Result<aegis_types::v1::AegisEnrollment> {
+) -> Result<aegis_dto::v1::AegisEnrollment> {
     api.require_user_admin("enroll a machine")?;
     api.create_enrollment(&AegisEnrollmentCreateRequest {
         aliases: HostAliases::new(vec![alias])?,
@@ -67,7 +67,7 @@ pub fn reserve(
 
 pub fn issue(
     api: &mut AuthenticatedApiClient,
-    host: &aegis_types::HostId,
+    host: &aegis_dto::HostId,
 ) -> Result<(AegisEnrollmentCredentialResponse, PathBuf)> {
     let invitation = api.issue_enrollment_credential(host)?;
     ensure!(
@@ -84,7 +84,7 @@ pub fn issue(
     Ok((invitation, path))
 }
 
-pub fn path(host: &aegis_types::HostId) -> Result<PathBuf> {
+pub fn path(host: &aegis_dto::HostId) -> Result<PathBuf> {
     Ok(config::app_dir()?
         .join("enrollments")
         .join(format!("{host}.json")))

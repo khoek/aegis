@@ -9,7 +9,7 @@ aegis ssh server
 ```
 
 Enrollment invitations carry their endpoint and namespace. The client library
-shares authentication and enrollment workflows with [`aegis-admin`](../aegis-admin);
+shares authentication and enrollment workflows with [`aegis-admin-tool`](../aegis-admin-tool);
 GCP and Firestore administration dependencies stay in that separate package.
 
 Use `aegis --help` and `aegis manage --help` for commands. Progress goes to stderr;

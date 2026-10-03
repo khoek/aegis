@@ -1,5 +1,5 @@
 use super::{database, gcloud::Gcloud, identity, store};
-use aegis_types::{NamespaceId, namespace::ApiEndpoint};
+use aegis_dto::{NamespaceId, namespace::ApiEndpoint};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};

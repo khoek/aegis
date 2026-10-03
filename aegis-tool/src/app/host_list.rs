@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode,
     v1::{AegisHostMessage, AegisHostMessageLevel},
 };

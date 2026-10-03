@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use aegis_types::v1::{
+use aegis_dto::v1::{
     AegisDnsChange, AegisDnsConfig, AegisDnsRecordKind, AegisDnsSyncResponse, AegisSyncAction,
 };
 use anyhow::{Context, anyhow, bail};
@@ -750,7 +750,7 @@ mod tests {
             host_id: "00000000-0000-4000-8000-000000000001"
                 .parse()
                 .expect("test host id should parse"),
-            mode: aegis_types::AegisHostMode::Leaf,
+            mode: aegis_dto::AegisHostMode::Leaf,
             wireguard_public_key: None,
             wireguard_ipv4: Some("10.76.1.2".to_string()),
             wireguard_ipv6: Some("fd76::1:2".to_string()),

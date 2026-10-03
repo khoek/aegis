@@ -5,7 +5,7 @@ use std::fs::Permissions;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use aegis_types::HostId;
+use aegis_dto::HostId;
 use anyhow::{Context, Result};
 use capulus::paths::home_dir;
 use capulus::store::ensure_directory;

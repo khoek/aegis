@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode, DEFAULT_AEGIS_NETWORK, HostAlias, HostAliases, HostId,
     sshd_install_dropin_contents,
     v1::{
@@ -108,10 +108,10 @@ pub(crate) const BABEL_OVERLAY_PREFIX: &str = "agx";
 pub(crate) const BABEL_VXLAN_PORT: &str = "4789";
 const BABEL_TRANSIT_IPV4_BASE: Ipv4Addr = Ipv4Addr::new(100, 64, 0, 0);
 const BABEL_TRANSIT_IPV6_BASE: Ipv6Addr = Ipv6Addr::new(0xfd75, 0xffff, 0, 0, 0, 0, 0, 0);
-const AEGIS_WIREGUARD_DIR: &str = aegis_types::layout::WIREGUARD_DIRECTORY;
+const AEGIS_WIREGUARD_DIR: &str = aegis_dto::layout::WIREGUARD_DIRECTORY;
 const AEGIS_WIREGUARD_UNIT_TEMPLATE_PATH: &str =
-    aegis_types::layout::WIREGUARD_SYSTEMD_UNIT_TEMPLATE_PATH;
-const AEGIS_WIREGUARD_UNIT_PREFIX: &str = aegis_types::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
+    aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_TEMPLATE_PATH;
+const AEGIS_WIREGUARD_UNIT_PREFIX: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
 
 const NORMAL_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const UNDERLAY_EVENT_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -124,7 +124,7 @@ const BABEL_ROUTE_READY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BABEL_ROUTE_READY_STABLE_POLLS: u8 = 2;
 const BABEL_PROTOCOL_NAME: &str = "babel_mesh";
 const BABEL_STATUS_COMMAND_TIMEOUT: &str = "3s";
-const APPLIED_CONFIG_DIRECTORY: &str = aegis_types::layout::APPLIED_CONFIG_DIRECTORY;
+const APPLIED_CONFIG_DIRECTORY: &str = aegis_dto::layout::APPLIED_CONFIG_DIRECTORY;
 const BIRD_APPLIED_CONFIG_NAME: &str = "bird";
 const SSHD_APPLIED_CONFIG_NAME: &str = "sshd";
 const WIREGUARD_UNIT_APPLIED_CONFIG_NAME: &str = "wireguard-systemd-unit";
@@ -1551,8 +1551,7 @@ fn direct_account_from_peer(peer: &AgentPeerCredentials) -> Result<DirectAccount
         )
         .into());
     }
-    let path =
-        Path::new(aegis_types::layout::DIRECT_STATE_DIRECTORY).join(format!("{account}.json"));
+    let path = Path::new(aegis_dto::layout::DIRECT_STATE_DIRECTORY).join(format!("{account}.json"));
     let raw = fs::read_to_string(&path).map_err(|error| {
         AgentForbidden(format!(
             "paired satellite account `{account}` has no managed identity: {error}"
@@ -1718,7 +1717,7 @@ fn reconcile_and_update_status_inner(
 
 fn reconcile(state: &AppState) -> Result<ReconcileSummary> {
     ensure_managed_service_running(
-        aegis_types::layout::EGRESS_RESOLVED_DROPIN_PATH,
+        aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH,
         "systemd-resolved.service",
     )?;
     let (inventory, direct_gateway, reported_wireguard_peers, warning) =
@@ -2311,7 +2310,7 @@ fn fetch_direct_gateway_plan(
     }
     let wireguard = managed_wireguard_config(&config.interface);
     ensure_wireguard_keypair(&wireguard)?;
-    let public_key = aegis_types::normalize_wireguard_key(
+    let public_key = aegis_dto::normalize_wireguard_key(
         &fs::read_to_string(&wireguard.public_key_path)
             .with_context(|| format!("failed to read {}", wireguard.public_key_path.display()))?,
     )
@@ -2344,9 +2343,9 @@ fn fetch_direct_gateway_plan(
         aliases,
         wireguard: AegisDirectWireGuard {
             public_key,
-            ipv4: aegis_types::wireguard_ipv4_for_host_id(&pool, 1)
+            ipv4: aegis_dto::wireguard_ipv4_for_host_id(&pool, 1)
                 .map_err(|error| anyhow!(error))?,
-            ipv6: aegis_types::wireguard_ipv6_for_host_id(&pool, 1)
+            ipv6: aegis_dto::wireguard_ipv6_for_host_id(&pool, 1)
                 .map_err(|error| anyhow!(error))?,
             endpoints,
         },
@@ -2397,7 +2396,7 @@ fn fetch_egress_plane(state: &AppState) -> Result<AegisEgressInventory> {
     let mut inventory = api.get_egress_inventory(&token)?;
     let wireguard = managed_wireguard_config(&inventory.config.interface);
     ensure_wireguard_keypair(&wireguard)?;
-    let public_key = aegis_types::normalize_wireguard_key(
+    let public_key = aegis_dto::normalize_wireguard_key(
         &fs::read_to_string(&wireguard.public_key_path)
             .with_context(|| format!("failed to read {}", wireguard.public_key_path.display()))?,
     )
@@ -2512,7 +2511,7 @@ fn parse_live_wireguard_handshakes(raw: &str) -> Result<Vec<AegisDirectPeerObser
             [public_key, timestamp] | [_, public_key, timestamp] => (*public_key, *timestamp),
             _ => bail!("unexpected `wg show all latest-handshakes` line: {line}"),
         };
-        let public_key = aegis_types::normalize_wireguard_key(public_key)
+        let public_key = aegis_dto::normalize_wireguard_key(public_key)
             .context("live WireGuard peer has an invalid public key")?;
         let timestamp = timestamp
             .parse::<i64>()
@@ -2679,7 +2678,7 @@ fn sync_local_ssh(
             Some(state.direct_client_ca_public_key.clone())
         }
         DirectGatewayPlan::Preserve => {
-            read_optional_trimmed_text(Path::new(aegis_types::layout::DIRECT_CLIENT_CA_PATH))?
+            read_optional_trimmed_text(Path::new(aegis_dto::layout::DIRECT_CLIENT_CA_PATH))?
         }
         DirectGatewayPlan::Disabled { .. } => None,
     };
@@ -3828,22 +3827,22 @@ fn apply_egress_policy_state(state: EgressPolicyState<'_>) -> Result<()> {
     let unit = egress_policy_systemd_unit_contents();
     let resolved = egress_resolved_dropin_contents(local);
     write_text_file_if_changed(
-        Path::new(aegis_types::layout::EGRESS_NFTABLES_PATH),
+        Path::new(aegis_dto::layout::EGRESS_NFTABLES_PATH),
         &nftables,
         Some(0o600),
     )?;
     write_text_file_if_changed(
-        Path::new(aegis_types::layout::EGRESS_POLICY_SCRIPT_PATH),
+        Path::new(aegis_dto::layout::EGRESS_POLICY_SCRIPT_PATH),
         &script,
         Some(0o700),
     )?;
     let unit_changed = write_text_file_if_changed(
-        Path::new(aegis_types::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH),
+        Path::new(aegis_dto::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH),
         &unit,
         Some(0o644),
     )?;
     let resolved_changed = write_text_file_if_changed(
-        Path::new(aegis_types::layout::EGRESS_RESOLVED_DROPIN_PATH),
+        Path::new(aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH),
         &resolved,
         Some(0o644),
     )?;
@@ -3864,7 +3863,7 @@ fn apply_egress_policy_state(state: EgressPolicyState<'_>) -> Result<()> {
         }
     }
     ensure_service_enabled(
-        aegis_types::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME,
+        aegis_dto::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME,
         "Aegis egress policy",
     )?;
     ensure_egress_services_running()?;
@@ -4700,7 +4699,7 @@ esac
 "#,
         timeout = EGRESS_COMMAND_TIMEOUT,
         docker_cleanup = egress_docker_forwarding_cleanup(&config.interface),
-        nftables = aegis_types::layout::EGRESS_NFTABLES_PATH,
+        nftables = aegis_dto::layout::EGRESS_NFTABLES_PATH,
         main_priority = config.main_rule_priority,
         egress_priority = config.egress_rule_priority,
         table = config.routing_table,
@@ -4726,7 +4725,7 @@ fn egress_policy_systemd_unit_contents() -> String {
          ExecStart=/usr/sbin/nft --file {}\n\n\
          [Install]\n\
          WantedBy=multi-user.target\n",
-        aegis_types::layout::EGRESS_NFTABLES_PATH,
+        aegis_dto::layout::EGRESS_NFTABLES_PATH,
     )
 }
 
@@ -4791,12 +4790,12 @@ fn apply_direct_gateway_config(inventory: &DirectGatewayState) -> Result<()> {
         wireguard_quick_config_changed(&config.config_path, &config.interface, &quick_applied)?;
     reconcile_direct_accounts(&inventory.satellites, true)?;
     write_text_file_if_changed(
-        Path::new(aegis_types::layout::DIRECT_CLIENT_CA_PATH),
+        Path::new(aegis_dto::layout::DIRECT_CLIENT_CA_PATH),
         &line_with_newline(&inventory.direct_client_ca_public_key),
         Some(0o644),
     )?;
     install_sshd_dropin(
-        Path::new(aegis_types::layout::DIRECT_SSHD_DROPIN_PATH),
+        Path::new(aegis_dto::layout::DIRECT_SSHD_DROPIN_PATH),
         &direct_gateway_sshd_dropin_contents(inventory),
     )?;
     ensure_directory_mode(Path::new(AEGIS_WIREGUARD_DIR), 0o755)?;
@@ -4866,9 +4865,9 @@ fn ensure_direct_gateway_reply_rules() -> Result<()> {
 }
 
 fn reconcile_direct_accounts(satellites: &[AegisDirectSatellite], keep_group: bool) -> Result<()> {
-    let state_directory = Path::new(aegis_types::layout::DIRECT_STATE_DIRECTORY);
-    let home_directory = Path::new(aegis_types::layout::DIRECT_HOME_DIRECTORY);
-    let principals_directory = Path::new(aegis_types::layout::AUTHORIZED_PRINCIPALS_DIRECTORY);
+    let state_directory = Path::new(aegis_dto::layout::DIRECT_STATE_DIRECTORY);
+    let home_directory = Path::new(aegis_dto::layout::DIRECT_HOME_DIRECTORY);
+    let principals_directory = Path::new(aegis_dto::layout::AUTHORIZED_PRINCIPALS_DIRECTORY);
     let managed_state_present = state_directory.exists() || home_directory.exists();
     if keep_group || !satellites.is_empty() {
         ensure_directory_mode(state_directory, 0o755)?;
@@ -4940,10 +4939,10 @@ fn reconcile_direct_accounts(satellites: &[AegisDirectSatellite], keep_group: bo
     if !keep_group && desired.is_empty() {
         remove_empty_directory(state_directory)?;
         remove_empty_directory(home_directory)?;
-        if managed_state_present && system_group_exists(aegis_types::layout::DIRECT_LOGIN_GROUP)? {
+        if managed_state_present && system_group_exists(aegis_dto::layout::DIRECT_LOGIN_GROUP)? {
             require_success(
                 "remove Aegis direct-login group",
-                Command::new("groupdel").arg(aegis_types::layout::DIRECT_LOGIN_GROUP),
+                Command::new("groupdel").arg(aegis_dto::layout::DIRECT_LOGIN_GROUP),
             )?;
         }
     }
@@ -4978,11 +4977,11 @@ fn validate_direct_identity(satellite: &AegisDirectSatellite) -> Result<()> {
 }
 
 fn ensure_direct_group(managed_state_present: bool) -> Result<()> {
-    if system_group_exists(aegis_types::layout::DIRECT_LOGIN_GROUP)? {
+    if system_group_exists(aegis_dto::layout::DIRECT_LOGIN_GROUP)? {
         if !managed_state_present {
             bail!(
                 "refusing to adopt existing unmanaged Unix group `{}` for paired satellites",
-                aegis_types::layout::DIRECT_LOGIN_GROUP
+                aegis_dto::layout::DIRECT_LOGIN_GROUP
             );
         }
     } else {
@@ -4990,7 +4989,7 @@ fn ensure_direct_group(managed_state_present: bool) -> Result<()> {
             "create Aegis direct-login group",
             Command::new("groupadd")
                 .arg("--system")
-                .arg(aegis_types::layout::DIRECT_LOGIN_GROUP),
+                .arg(aegis_dto::layout::DIRECT_LOGIN_GROUP),
         )?;
     }
     Ok(())
@@ -5067,7 +5066,7 @@ fn getent_entry(database: &str, key: &str) -> Result<Option<String>> {
 }
 
 fn direct_account_state_path(account: &str) -> PathBuf {
-    Path::new(aegis_types::layout::DIRECT_STATE_DIRECTORY).join(format!("{account}.json"))
+    Path::new(aegis_dto::layout::DIRECT_STATE_DIRECTORY).join(format!("{account}.json"))
 }
 
 fn ensure_direct_account(account: &str, satellite_slug: &str) -> Result<()> {
@@ -5105,8 +5104,8 @@ fn ensure_direct_account(account: &str, satellite_slug: &str) -> Result<()> {
     state_content.push('\n');
     write_text_file_if_changed(&state_path, &state_content, Some(0o600))?;
 
-    let home = Path::new(aegis_types::layout::DIRECT_HOME_DIRECTORY).join(account);
-    let group_gid = system_group_gid(aegis_types::layout::DIRECT_LOGIN_GROUP)?
+    let home = Path::new(aegis_dto::layout::DIRECT_HOME_DIRECTORY).join(account);
+    let group_gid = system_group_gid(aegis_dto::layout::DIRECT_LOGIN_GROUP)?
         .ok_or_else(|| anyhow!("Aegis direct-login group is missing"))?;
     if existing_account.is_none() {
         require_success(
@@ -5114,7 +5113,7 @@ fn ensure_direct_account(account: &str, satellite_slug: &str) -> Result<()> {
             Command::new("useradd")
                 .arg("--system")
                 .arg("--gid")
-                .arg(aegis_types::layout::DIRECT_LOGIN_GROUP)
+                .arg(aegis_dto::layout::DIRECT_LOGIN_GROUP)
                 .arg("--home-dir")
                 .arg(&home)
                 .arg("--create-home")
@@ -5129,7 +5128,7 @@ fn ensure_direct_account(account: &str, satellite_slug: &str) -> Result<()> {
             "reconcile Aegis direct-login account",
             Command::new("usermod")
                 .arg("--gid")
-                .arg(aegis_types::layout::DIRECT_LOGIN_GROUP)
+                .arg(aegis_dto::layout::DIRECT_LOGIN_GROUP)
                 .arg("--home")
                 .arg(&home)
                 .arg("--shell")
@@ -5149,7 +5148,7 @@ fn ensure_direct_account(account: &str, satellite_slug: &str) -> Result<()> {
             Command::new("chown")
                 .arg(format!(
                     "{account}:{}",
-                    aegis_types::layout::DIRECT_LOGIN_GROUP
+                    aegis_dto::layout::DIRECT_LOGIN_GROUP
                 ))
                 .arg(&home),
         )?;
@@ -5162,7 +5161,7 @@ fn remove_direct_account(account: &str) -> Result<()> {
         bail!("refusing to remove invalid direct account `{account}`");
     }
     remove_file_if_exists(
-        &Path::new(aegis_types::layout::AUTHORIZED_PRINCIPALS_DIRECTORY).join(account),
+        &Path::new(aegis_dto::layout::AUTHORIZED_PRINCIPALS_DIRECTORY).join(account),
     )?;
     if system_account(account)?.is_some() {
         let _ = run_capture(Command::new("loginctl").args(["terminate-user", account]));
@@ -5172,7 +5171,7 @@ fn remove_direct_account(account: &str) -> Result<()> {
             Command::new("userdel").arg("--remove").arg(account),
         )?;
     }
-    let home = Path::new(aegis_types::layout::DIRECT_HOME_DIRECTORY).join(account);
+    let home = Path::new(aegis_dto::layout::DIRECT_HOME_DIRECTORY).join(account);
     match fs::remove_dir_all(&home) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -5208,7 +5207,7 @@ fn read_directory_if_exists(path: &Path) -> Result<Vec<fs::DirEntry>> {
 
 pub(crate) fn disable_direct_gateway(config: &AegisDirectGatewayConfig) -> Result<()> {
     reconcile_direct_accounts(&[], false)?;
-    remove_file_if_exists(Path::new(aegis_types::layout::DIRECT_CLIENT_CA_PATH))?;
+    remove_file_if_exists(Path::new(aegis_dto::layout::DIRECT_CLIENT_CA_PATH))?;
     let wireguard_config = managed_wireguard_config(&config.interface);
     let service = wireguard_service_name(&wireguard_config);
     if wireguard_service_is_active(&service)? || service_is_enabled(&service)? {
@@ -5230,7 +5229,7 @@ pub(crate) fn disable_direct_gateway(config: &AegisDirectGatewayConfig) -> Resul
             )
         })?;
     }
-    remove_sshd_dropin(Path::new(aegis_types::layout::DIRECT_SSHD_DROPIN_PATH))
+    remove_sshd_dropin(Path::new(aegis_dto::layout::DIRECT_SSHD_DROPIN_PATH))
 }
 
 fn direct_gateway_sshd_dropin_contents(inventory: &DirectGatewayState) -> String {
@@ -5253,8 +5252,8 @@ fn direct_gateway_sshd_dropin_contents(inventory: &DirectGatewayState) -> String
            DisableForwarding yes\n\
            PermitTTY yes\n\
          Match all\n",
-        aegis_binary = aegis_types::layout::SYSTEM_BINARY_PATH,
-        direct_group = aegis_types::layout::DIRECT_LOGIN_GROUP,
+        aegis_binary = aegis_dto::layout::SYSTEM_BINARY_PATH,
+        direct_group = aegis_dto::layout::DIRECT_LOGIN_GROUP,
         ipv4 = inventory.gateway.wireguard.ipv4,
         ipv6 = inventory.gateway.wireguard.ipv6,
     )
@@ -5347,12 +5346,12 @@ fn service_is_enabled(service: &str) -> Result<bool> {
 
 fn ensure_egress_services_running() -> Result<()> {
     ensure_managed_service_running(
-        aegis_types::layout::EGRESS_RESOLVED_DROPIN_PATH,
+        aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH,
         "systemd-resolved.service",
     )?;
     ensure_managed_service_running(
-        aegis_types::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH,
-        aegis_types::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME,
+        aegis_dto::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH,
+        aegis_dto::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME,
     )
 }
 
@@ -5821,7 +5820,7 @@ fn managed_wireguard_config(interface: &str) -> WireGuardConfig {
 }
 
 fn ensure_wireguard_systemd_unit() -> Result<()> {
-    let desired = aegis_types::managed_wireguard_systemd_unit_contents();
+    let desired = aegis_dto::managed_wireguard_systemd_unit_contents();
     let applied = AppliedConfig::new(WIREGUARD_UNIT_APPLIED_CONFIG_NAME, desired.as_bytes());
     let changed = write_text_file_if_changed(
         Path::new(AEGIS_WIREGUARD_UNIT_TEMPLATE_PATH),
@@ -7051,15 +7050,14 @@ fn verify_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -
         line_with_newline(&private_key).as_bytes(),
     )?
     .stdout;
-    let derived_public = aegis_types::normalize_wireguard_key(&derived_public)
+    let derived_public = aegis_dto::normalize_wireguard_key(&derived_public)
         .context("derived local WireGuard public key is invalid")?;
-    let stored_public =
-        aegis_types::normalize_wireguard_key(&stored_public).with_context(|| {
-            format!(
-                "stored WireGuard public key at {} is invalid",
-                config.public_key_path.display()
-            )
-        })?;
+    let stored_public = aegis_dto::normalize_wireguard_key(&stored_public).with_context(|| {
+        format!(
+            "stored WireGuard public key at {} is invalid",
+            config.public_key_path.display()
+        )
+    })?;
     if stored_public != derived_public {
         bail!(
             "local WireGuard public key at {} does not match private key at {}",
@@ -7067,7 +7065,7 @@ fn verify_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -
             config.private_key_path.display()
         );
     }
-    let expected = aegis_types::normalize_wireguard_key(expected)
+    let expected = aegis_dto::normalize_wireguard_key(expected)
         .context("published WireGuard public key is invalid")?;
     if derived_public != expected {
         bail!(
@@ -7147,7 +7145,7 @@ mod tests {
     #[test]
     fn direct_target_cache_serves_menu_without_a_network_request() {
         let cache = super::DirectTargetCache::default();
-        let targets = aegis_types::v1::AegisDirectTargetListResponse {
+        let targets = aegis_dto::v1::AegisDirectTargetListResponse {
             targets: Vec::new(),
         };
         assert_eq!(
@@ -7197,7 +7195,7 @@ mod tests {
     };
     use crate::cli::AgentMode;
     use crate::config::{AgentConfig, AgentConfigOptions, AgentHostConfig};
-    use aegis_types::{
+    use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
         v1::{
             AegisDirectGateway, AegisDirectGatewayConfig, AegisDirectGatewayReport,
@@ -7422,7 +7420,7 @@ config_path = "/etc/bird/bird.conf"
                 messages: Vec::new(),
                 agent: None,
                 ssh_lockdown_enabled: false,
-                observed_public_ips: aegis_types::v1::AegisObservedPublicIps::default(),
+                observed_public_ips: aegis_dto::v1::AegisObservedPublicIps::default(),
                 transient: false,
                 pending,
                 updated_unix: 0,
@@ -7831,7 +7829,7 @@ config_path = "/etc/bird/bird.conf"
         assert!(unit.contains("Requires=aegis.slice"));
         assert!(unit.contains("After=local-fs.target aegis.slice"));
         assert!(unit.contains("ExecStart=/usr/sbin/nft --file"));
-        let wireguard = aegis_types::managed_wireguard_systemd_unit_contents();
+        let wireguard = aegis_dto::managed_wireguard_systemd_unit_contents();
         assert!(!wireguard.contains("Before="));
     }
 

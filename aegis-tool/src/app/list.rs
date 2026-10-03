@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use aegis_types::HostId;
+use aegis_dto::HostId;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::agent::{AEGIS_AGENT_VERSION_PATH, AgentTunnelStatus};
@@ -71,7 +71,7 @@ impl<'a> ProgressFooterOutcome<'a> {
 }
 
 pub(super) fn refresh_host_cache(api_base_override: Option<&str>) -> Result<Vec<CachedHost>> {
-    refresh_host_cache_for_network(api_base_override, aegis_types::DEFAULT_AEGIS_NETWORK)
+    refresh_host_cache_for_network(api_base_override, aegis_dto::DEFAULT_AEGIS_NETWORK)
 }
 
 pub(super) fn refresh_host_cache_for_network(
@@ -360,7 +360,7 @@ impl Command<'_> {
         } else if ui::current().progress_is_enabled() {
             probe_cached_hosts_with_progress(
                 &visible_cached,
-                self.args.network == aegis_types::DEFAULT_AEGIS_NETWORK,
+                self.args.network == aegis_dto::DEFAULT_AEGIS_NETWORK,
             )?;
         } else {
             let rendered = listed_hosts_with_reachability(&visible_cached);
@@ -591,7 +591,7 @@ impl Command<'_> {
     }
 
     fn print_local_tunnel_status(&self) {
-        if self.args.network == aegis_types::DEFAULT_AEGIS_NETWORK {
+        if self.args.network == aegis_dto::DEFAULT_AEGIS_NETWORK {
             print_local_tunnel_status();
         }
     }

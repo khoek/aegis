@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aegis_types::{AegisHostMode, HostAlias};
+use aegis_dto::{AegisHostMode, HostAlias};
 use anyhow::{Context, Result, ensure};
 use capulus::shell::shell_quote;
 use serde_json::Value;
@@ -341,7 +341,7 @@ fn wait_for_ssh(cloud: &super::gcloud::Gcloud, zone: &str) -> Result<()> {
 }
 
 fn bootstrap_script(
-    invitation: &aegis_types::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
 ) -> Result<String> {
     Ok(format!(
         r#"set -euo pipefail

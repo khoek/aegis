@@ -1,4 +1,4 @@
-# aegis-types
+# aegis-dto
 
 Shared Aegis protocol types, namespace identifiers, network configuration, and validation.
 No HTTP server, database client, or credential store.

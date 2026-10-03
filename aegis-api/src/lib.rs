@@ -21,7 +21,7 @@ impl ApplicationOptions {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             database: arche_firestore::DatabaseOptions::from_env(),
-            oidc_client_secret: std::env::var(aegis_types::identity::OIDC_SECRET_ENV).map_err(
+            oidc_client_secret: std::env::var(aegis_dto::identity::OIDC_SECRET_ENV).map_err(
                 |_| anyhow::anyhow!("AEGIS_OIDC_CLIENT_SECRET must be supplied to the API runtime"),
             )?,
         })

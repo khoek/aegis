@@ -7,8 +7,8 @@ use crate::aegis_store::{
     AegisSatelliteBrokerUseRecord, AegisSatelliteRecord, AegisStore, AegisUserIdentity,
     enrollment_phase_rank, prepared_host_matches_enrollment, validate_current_enrollment,
 };
-use aegis_types::configuration::*;
-use aegis_types::{
+use aegis_dto::configuration::*;
+use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases, HostId, WireGuardAddressError, WireGuardHostIdentity,
     allocate_lowest_free_wireguard_host_id,
     v1::{
@@ -198,7 +198,7 @@ pub struct AegisDb {
 }
 
 impl AegisDb {
-    pub fn new(db: Db, namespace: aegis_types::NamespaceId) -> Self {
+    pub fn new(db: Db, namespace: aegis_dto::NamespaceId) -> Self {
         let parent = format!(
             "{}/v2/aegis/namespaces/{namespace}",
             db.inner().get_documents_path()
@@ -267,8 +267,8 @@ impl AegisDb {
 
 pub async fn load_aegis_instance_config(
     db: &AegisDb,
-) -> anyhow::Result<aegis_types::configuration::AegisInstanceConfig> {
-    aegis_types::configuration::AegisInstanceConfig {
+) -> anyhow::Result<aegis_dto::configuration::AegisInstanceConfig> {
+    aegis_dto::configuration::AegisInstanceConfig {
         config: load_aegis_config(db).await?,
         client_ca: load_client_ca_config(db).await?,
         direct_client_ca: load_direct_client_ca_config(db).await?,
@@ -278,7 +278,7 @@ pub async fn load_aegis_instance_config(
     .require()
 }
 
-pub async fn list_aegis_namespaces(db: &Db) -> anyhow::Result<Vec<aegis_types::NamespaceId>> {
+pub async fn list_aegis_namespaces(db: &Db) -> anyhow::Result<Vec<aegis_dto::NamespaceId>> {
     let docs = db
         .inner()
         .fluent()
@@ -1224,7 +1224,7 @@ struct StoredAegisNetworkMemberRecord {
 #[serde(deny_unknown_fields)]
 struct StoredAegisEgressState {
     generation: u64,
-    policies: BTreeMap<HostId, aegis_types::v1::AegisEgressPolicy>,
+    policies: BTreeMap<HostId, aegis_dto::v1::AegisEgressPolicy>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1250,7 +1250,7 @@ fn default_aegis_host_port() -> Option<u16> {
 }
 
 fn stored_direct_gateway_report(
-    report: &aegis_types::v1::AegisDirectGatewayReport,
+    report: &aegis_dto::v1::AegisDirectGatewayReport,
 ) -> StoredAegisDirectGatewayReport {
     StoredAegisDirectGatewayReport {
         observed_unix: report.observed_unix,
@@ -1267,13 +1267,13 @@ fn stored_direct_gateway_report(
 
 fn domain_direct_gateway_report(
     report: StoredAegisDirectGatewayReport,
-) -> aegis_types::v1::AegisDirectGatewayReport {
-    aegis_types::v1::AegisDirectGatewayReport {
+) -> aegis_dto::v1::AegisDirectGatewayReport {
+    aegis_dto::v1::AegisDirectGatewayReport {
         observed_unix: report.observed_unix,
         peers: report
             .peers
             .into_iter()
-            .map(|peer| aegis_types::v1::AegisDirectPeerObservation {
+            .map(|peer| aegis_dto::v1::AegisDirectPeerObservation {
                 public_key: peer.public_key,
                 latest_handshake_unix: peer.latest_handshake_unix,
             })
@@ -1792,7 +1792,7 @@ impl AegisStore for AegisDb {
         let Some(user) = crate::identity::store(&self.db)?.user(user_id).await? else {
             return Ok(None);
         };
-        let Some(member) = get_stored_obj_at_if_exists::<aegis_types::NamespaceMembership>(
+        let Some(member) = get_stored_obj_at_if_exists::<aegis_dto::NamespaceMembership>(
             self.inner(),
             &self.parent,
             "members",
@@ -1802,7 +1802,7 @@ impl AegisStore for AegisDb {
         else {
             return Ok(None);
         };
-        let admin = member.role == aegis_types::NamespaceRole::Admin;
+        let admin = member.role == aegis_dto::NamespaceRole::Admin;
         Ok(Some(AegisUserIdentity {
             user_id: user.id,
             disabled: user.disabled,
@@ -2484,7 +2484,7 @@ impl AegisStore for AegisDb {
     async fn fetch_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
-    ) -> anyhow::Result<Option<aegis_types::v1::AegisEgressPolicy>> {
+    ) -> anyhow::Result<Option<aegis_dto::v1::AegisEgressPolicy>> {
         let state = fetch_aegis_egress_state(self, &aegis_parent(self)?).await?;
         Ok(state.policies.get(source_host_id).cloned())
     }
@@ -2494,7 +2494,7 @@ impl AegisStore for AegisDb {
         source_host_id: &HostId,
         expected_generation: u64,
         expected_revision: Option<u64>,
-        replacement: Option<&aegis_types::v1::AegisEgressPolicy>,
+        replacement: Option<&aegis_dto::v1::AegisEgressPolicy>,
     ) -> Result<(), AegisEgressWriteError> {
         if replacement.is_some_and(|policy| policy.source_host_id != *source_host_id) {
             return Err(AegisEgressWriteError::Internal(anyhow::anyhow!(
@@ -2846,7 +2846,7 @@ impl AegisStore for AegisDb {
         &self,
         network: &str,
         member: &AegisNetworkMemberRecord,
-        config: &aegis_types::v1::AegisNetworkConfig,
+        config: &aegis_dto::v1::AegisNetworkConfig,
     ) -> Result<AegisNetworkMemberRecord, AegisHostWriteError> {
         update_aegis_network_member_record(self, network, member, config).await
     }
@@ -3510,7 +3510,7 @@ async fn update_aegis_network_member_record(
     db: &AegisDb,
     network: &str,
     member: &AegisNetworkMemberRecord,
-    config: &aegis_types::v1::AegisNetworkConfig,
+    config: &aegis_dto::v1::AegisNetworkConfig,
 ) -> Result<AegisNetworkMemberRecord, AegisHostWriteError> {
     let parent = aegis_network_parent(db, network).map_err(AegisHostWriteError::from)?;
     let service_parent = aegis_parent(db).map_err(AegisHostWriteError::from)?;
@@ -3847,7 +3847,7 @@ pub(crate) fn maybe_allocate_internal_addresses(
     host: &mut AegisNetworkMemberRecord,
     existing: Option<&AegisNetworkMemberRecord>,
     peers: &[AegisNetworkMemberRecord],
-    mesh: &aegis_types::v1::AegisMeshConfig,
+    mesh: &aegis_dto::v1::AegisMeshConfig,
 ) -> Result<(), AegisHostWriteError> {
     if let Some(existing) = existing
         && let (Some(ipv4), Some(ipv6)) = (&existing.internal_ipv4, &existing.internal_ipv6)
@@ -3892,8 +3892,8 @@ fn allocate_default_internal_addresses(
     host: &AegisNetworkMemberRecord,
     existing: Option<&AegisNetworkMemberRecord>,
     peers: &[AegisNetworkMemberRecord],
-    mesh: &aegis_types::v1::AegisMeshConfig,
-) -> Result<aegis_types::v1::AegisNetworkMemberInternalAddresses, AegisHostWriteError> {
+    mesh: &aegis_dto::v1::AegisMeshConfig,
+) -> Result<aegis_dto::v1::AegisNetworkMemberInternalAddresses, AegisHostWriteError> {
     let mesh_ipv4 = parse_ipv4_subnet(&mesh.subnet_ipv4)?;
     let mesh_ipv6 = parse_ipv6_subnet(&mesh.subnet_ipv6)?;
     let wireguard_ipv4 = parse_ipv4_subnet(&mesh.wireguard_subnet_ipv4)?;
@@ -3939,7 +3939,7 @@ fn allocate_default_internal_addresses(
         if used.contains(&candidate_ipv4) || used.contains(&candidate_ipv6) {
             continue;
         }
-        return Ok(aegis_types::v1::AegisNetworkMemberInternalAddresses {
+        return Ok(aegis_dto::v1::AegisNetworkMemberInternalAddresses {
             ipv4: candidate_ipv4,
             ipv6: candidate_ipv6,
         });
@@ -4117,7 +4117,7 @@ fn tls_dns_constraint(ca: &TlsCaConfig) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aegis_types::v1::AegisHostMessageLevel;
+    use aegis_dto::v1::AegisHostMessageLevel;
     use firestore::FirestoreValue;
     use firestore::errors::{FirestoreDataConflictError, FirestoreErrorPublicGenericDetails};
     use x509_parser::{extensions::X509Extension, prelude::FromDer};
@@ -4451,7 +4451,7 @@ mod tests {
     #[test]
     fn tls_desired_state_is_authoritative_and_rejects_duplicate_labels() {
         let desired = AegisTlsDesiredState {
-            certificates: vec![aegis_types::v1::AegisTlsCertificateConfig {
+            certificates: vec![aegis_dto::v1::AegisTlsCertificateConfig {
                 label: " crates ".to_string(),
                 host_id: test_host_id(1),
                 dns_names: vec!["crates.x.hoek.io".to_string()],
@@ -4467,7 +4467,7 @@ mod tests {
         let mut duplicate = desired;
         duplicate
             .certificates
-            .push(aegis_types::v1::AegisTlsCertificateConfig {
+            .push(aegis_dto::v1::AegisTlsCertificateConfig {
                 label: "crates".to_string(),
                 host_id: test_host_id(2),
                 dns_names: vec!["other.x.hoek.io".to_string()],
@@ -4679,7 +4679,7 @@ mod tests {
 
     #[test]
     fn maybe_allocate_wireguard_identity_preserves_existing_peer_address() {
-        let mesh = aegis_types::v1::AegisMeshConfig {
+        let mesh = aegis_dto::v1::AegisMeshConfig {
             endpoint_port: 51820,
             overlay_mtu: 1350,
             subnet_ipv4: "10.75.0.0/16".to_string(),

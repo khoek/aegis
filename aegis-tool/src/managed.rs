@@ -23,7 +23,7 @@ pub(crate) fn product() -> Result<ManagedProduct> {
             .context("aegis-tool package version is not semantic")?,
         program: ManagedProgramOptions {
             cargo_binary: "aegis".to_string(),
-            installed_path: PathBuf::from(aegis_types::layout::SYSTEM_BINARY_PATH),
+            installed_path: PathBuf::from(aegis_dto::layout::SYSTEM_BINARY_PATH),
             command_prefix: vec!["agent".to_string()],
         },
         service: AgentServiceOptions {
@@ -31,7 +31,7 @@ pub(crate) fn product() -> Result<ManagedProduct> {
             command: vec![
                 "serve".to_string(),
                 "--config".to_string(),
-                aegis_types::layout::AGENT_CONFIG_PATH.to_string(),
+                aegis_dto::layout::AGENT_CONFIG_PATH.to_string(),
             ],
             restart_delay: Duration::from_secs(60),
             network_required: true,
@@ -101,7 +101,7 @@ mod tests {
 
         assert_eq!(
             product.program().installed_path(),
-            std::path::Path::new(aegis_types::layout::SYSTEM_BINARY_PATH)
+            std::path::Path::new(aegis_dto::layout::SYSTEM_BINARY_PATH)
         );
         assert!(manifest.files.iter().any(|file| matches!(
             file,

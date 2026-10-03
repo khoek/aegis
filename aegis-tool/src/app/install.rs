@@ -11,7 +11,7 @@ use crate::config::{
     resolve_api_base,
 };
 use crate::ui::{self, Task, TaskOptions, TaskVisibility};
-use aegis_types::{HostId, layout::AGENT_CONFIG_PATH};
+use aegis_dto::{HostId, layout::AGENT_CONFIG_PATH};
 use anyhow::{Context, Result, bail};
 use capulus::managed::ManagedFile;
 use capulus::shell::shell_quote as sh_quote;
@@ -103,9 +103,8 @@ impl ResolvedInstall {
         )?;
         if let Some(existing) = existing_install.as_ref() {
             anyhow::ensure!(
-                aegis_types::namespace::ApiEndpoint::parse(&api_base)
-                    .map_err(anyhow::Error::msg)?
-                    == aegis_types::namespace::ApiEndpoint::parse(&existing.api_base)
+                aegis_dto::namespace::ApiEndpoint::parse(&api_base).map_err(anyhow::Error::msg)?
+                    == aegis_dto::namespace::ApiEndpoint::parse(&existing.api_base)
                         .map_err(anyhow::Error::msg)?,
                 "the selected namespace differs from this machine's enrollment; select its enrolled namespace to upgrade, or unenroll it before enrolling elsewhere"
             );
@@ -243,7 +242,7 @@ impl ResolvedInstall {
         let host_cert_path = self.cert.as_ref().map(|path| path.display().to_string());
         system::Sshd::write_dropin(
             Path::new(AEGIS_SSHD_DROPIN),
-            &aegis_types::sshd_install_dropin_contents(
+            &aegis_dto::sshd_install_dropin_contents(
                 AEGIS_CLIENT_CA_PATH,
                 &format!("{AEGIS_AUTHORIZED_PRINCIPALS_DIR}/%u"),
                 host_key_path.as_deref(),
@@ -311,10 +310,8 @@ impl ResolvedInstall {
             &managed_unit_contents("/etc/systemd/system/aegis-capulus.socket")?,
             0o644,
         )?;
-        system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH)).write_atomic(
-            &aegis_types::managed_wireguard_systemd_unit_contents(),
-            0o644,
-        )?;
+        system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH))
+            .write_atomic(&aegis_dto::managed_wireguard_systemd_unit_contents(), 0o644)?;
         system::Systemd::daemon_reload()?;
         if !self.staged_enrollment {
             system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).enable_now()?;
@@ -423,7 +420,7 @@ fn validate_system_aegis_binary() -> Result<()> {
     if running != expected {
         bail!(
             "privileged Aegis installation must run from the trusted system binary at {}",
-            aegis_types::layout::SYSTEM_BINARY_PATH
+            aegis_dto::layout::SYSTEM_BINARY_PATH
         );
     }
     Ok(())

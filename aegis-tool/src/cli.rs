@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::ui::UiArgs;
-use aegis_types::{HostAlias, HostId};
+use aegis_dto::{HostAlias, HostId};
 use capulus::managed::AgentLifecycleCommand;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ pub struct Cli {
         value_name = "NAME",
         help = "Select the Aegis namespace for this command"
     )]
-    pub namespace: Option<aegis_types::NamespaceId>,
+    pub namespace: Option<aegis_dto::NamespaceId>,
 
     #[arg(
         long,
@@ -206,7 +206,7 @@ pub struct NamespaceArgs {
 #[derive(Debug, Subcommand)]
 pub enum NamespaceCommands {
     #[command(about = "Remember a namespace after checking membership.")]
-    Use { namespace: aegis_types::NamespaceId },
+    Use { namespace: aegis_dto::NamespaceId },
     #[command(about = "Show the selected API endpoint and namespace membership.")]
     Show,
 }
@@ -1071,7 +1071,7 @@ pub struct AgentArgs {
     #[arg(
         long,
         value_name = "PATH",
-        default_value = aegis_types::layout::AGENT_CONFIG_PATH,
+        default_value = aegis_dto::layout::AGENT_CONFIG_PATH,
         help = "Path to the aegis-agent configuration file"
     )]
     pub config: PathBuf,

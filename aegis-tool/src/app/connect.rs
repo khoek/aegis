@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
-use aegis_types::{HostId, v1::aegis_login_principal_from_user_cert_principal};
+use aegis_dto::{HostId, v1::aegis_login_principal_from_user_cert_principal};
 use anyhow::{Context, Result, anyhow, bail};
 use ssh_key::{
     Algorithm, Certificate, HashAlg, LineEnding, PrivateKey, PublicKey, rand_core::OsRng,

@@ -1,4 +1,4 @@
-use aegis_types::{HostId, v1::AegisMeshConfig};
+use aegis_dto::{HostId, v1::AegisMeshConfig};
 use anyhow::Result;
 use capulus::shell::shell_quote as sh_quote;
 
@@ -146,7 +146,7 @@ sudo chmod 644 {REMOTE_HOST_CERT_PATH}\n"
             install_args = install_args,
             tool_bootstrap = system_program_bootstrap_script(true),
             login_user = sh_quote(self.login_principal),
-            system_binary = aegis_types::layout::SYSTEM_BINARY_PATH,
+            system_binary = aegis_dto::layout::SYSTEM_BINARY_PATH,
             wireguard_setup = wireguard_setup,
         ))
     }

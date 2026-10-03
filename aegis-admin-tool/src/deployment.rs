@@ -1,8 +1,6 @@
 use std::{fs, io::Write, path::PathBuf, time::Duration};
 
-use aegis_types::{
-    NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint,
-};
+use aegis_dto::{NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint};
 use anyhow::{Context, Result, bail, ensure};
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -117,8 +115,8 @@ pub(super) struct Deployment {
     image: String,
     secret_version: Option<String>,
     completed: Vec<String>,
-    pub(super) hub: Option<aegis_types::HostId>,
-    local_host: Option<aegis_types::HostId>,
+    pub(super) hub: Option<aegis_dto::HostId>,
+    local_host: Option<aegis_dto::HostId>,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +154,7 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
     } = args;
     let project = project(project_arg)?;
     let _lock = aegis_tool::client::deployment_lock(&project)?;
-    let oauth = read_oauth_client(Some(&oauth_client), &endpoint)?;
+    let oauth = GoogleWebClient::read(&oauth_client, &endpoint)?;
     let setup = store::SetupOptions {
         issuer_url: endpoint.clone(),
         audience: endpoint.clone(),
@@ -196,6 +194,25 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
 }
 
 impl GoogleWebClient {
+    fn read(path: &std::path::Path, endpoint: &str) -> Result<Self> {
+        let client: GoogleClient = serde_json::from_slice(
+            &fs::read(path).with_context(|| format!("reading {}", path.display()))?,
+        )
+        .context("Expected downloaded Google OAuth Web application client JSON")?;
+        ensure!(
+            !client.web.client_id.trim().is_empty() && !client.web.client_secret.trim().is_empty(),
+            "OAuth client credentials are empty"
+        );
+        ensure!(
+            client
+                .web
+                .redirect_uris
+                .contains(&format!("{endpoint}/oauth/callback")),
+            "Add authorized redirect URI {endpoint}/oauth/callback to the Web client, then download its JSON again"
+        );
+        Ok(client.web)
+    }
+
     fn login(&self, endpoint: &str) -> LoginConfiguration {
         LoginConfiguration {
             issuer_url: "https://accounts.google.com".into(),
@@ -262,7 +279,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
                 }
             }
         };
-        let oauth = read_oauth_client(args.oauth_client.as_ref(), &endpoint)?;
+        let oauth = read_oauth_client(args.oauth_client.as_ref(), &project, &endpoint)?;
         let login = oauth.login(&endpoint);
         client_secret = Some(oauth.client_secret);
         let config = DeploymentConfig {
@@ -292,7 +309,11 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         }
     };
     if deployment.secret_version.is_none() && client_secret.is_none() {
-        let oauth = read_oauth_client(args.oauth_client.as_ref(), &deployment.config.endpoint)?;
+        let oauth = read_oauth_client(
+            args.oauth_client.as_ref(),
+            &deployment.config.project,
+            &deployment.config.endpoint,
+        )?;
         ensure!(
             oauth.client_id == deployment.config.login.client_id,
             "OAuth client differs from saved deployment"
@@ -460,13 +481,12 @@ impl Deployment {
             Some(host) => host,
             None => {
                 let name = fs::read_to_string("/etc/hostname")?;
-                let alias = aegis_types::HostAlias::parse(
-                    name.trim().split('.').next().unwrap_or_default(),
-                )?;
+                let alias =
+                    aegis_dto::HostAlias::parse(name.trim().split('.').next().unwrap_or_default())?;
                 let enrollment = aegis_tool::client::enrollment::reserve(
                     &mut api,
                     alias,
-                    aegis_types::AegisHostMode::Leaf,
+                    aegis_dto::AegisHostMode::Leaf,
                 )?;
                 self.local_host = Some(enrollment.host_id);
                 self.persist().context("machine reservation committed; save its host ID in the setup receipt before retrying")?;
@@ -817,7 +837,7 @@ impl Deployment {
         );
         Ok(())
     }
-    pub(super) fn save_hub(&mut self, id: aegis_types::HostId) -> Result<()> {
+    pub(super) fn save_hub(&mut self, id: aegis_dto::HostId) -> Result<()> {
         self.hub = Some(id);
         self.persist()
     }
@@ -853,31 +873,42 @@ fn prompt(label: &str, default: Option<&str>) -> Result<String> {
         input.interact_text().map_err(Into::into)
     })
 }
-fn read_oauth_client(path: Option<&PathBuf>, endpoint: &str) -> Result<GoogleWebClient> {
-    let path = match path {
-        Some(path) => path.clone(),
-        None => {
-            ui::stage(&format!(
-                "Create a Google OAuth web application client at https://console.cloud.google.com/auth/clients\nRegister redirect URI: {endpoint}/oauth/callback\nConfigure the consent screen for your intended users, then download the client JSON."
-            ));
-            PathBuf::from(prompt("OAuth client JSON file", None)?)
-        }
-    };
-    let client: GoogleClient = serde_json::from_slice(
-        &fs::read(&path).with_context(|| format!("reading {}", path.display()))?,
+fn read_oauth_client(
+    path: Option<&PathBuf>,
+    project: &str,
+    endpoint: &str,
+) -> Result<GoogleWebClient> {
+    if let Some(path) = path {
+        return GoogleWebClient::read(path, endpoint);
+    }
+    ui::stage(&format!(
+        "Set up Google sign-in for project {project}:\n\
+         1. Open https://console.cloud.google.com/auth/overview?project={project}\n\
+            If prompted, choose Get started, name the app Aegis, and select your email and audience.\n\
+            For External / Testing, add yourself and other sign-in users under Audience → Test users.\n\
+         2. Open https://console.cloud.google.com/auth/clients?project={project}\n\
+            Create client → Web application → name Aegis. Add this authorized redirect URI:\n\
+            {endpoint}/oauth/callback\n\
+         3. Download the client JSON and enter its local path below. Keep this file private."
+    ));
+    ui::require_interactive(
+        "Rerun setup in a terminal to continue, or provide --oauth-client FILE",
     )?;
-    ensure!(
-        !client.web.client_id.trim().is_empty() && !client.web.client_secret.trim().is_empty(),
-        "OAuth client credentials are empty"
-    );
-    ensure!(
-        client
-            .web
-            .redirect_uris
-            .contains(&format!("{endpoint}/oauth/callback")),
-        "OAuth client must register exactly {endpoint}/oauth/callback"
-    );
-    Ok(client.web)
+    let started = std::time::Instant::now();
+    loop {
+        let path = PathBuf::from(prompt("Downloaded OAuth client JSON file", None)?);
+        ui::check_cancelled()?;
+        match GoogleWebClient::read(&path, endpoint) {
+            Ok(client) => {
+                ui::success("Google sign-in credentials validated");
+                return Ok(client);
+            }
+            Err(error) => ui::warn(&format!(
+                "{error:#}. Waiting for corrected credentials (elapsed {}). Reading credentials has not changed any resources.",
+                ui::format_duration(started.elapsed())
+            )),
+        }
+    }
 }
 fn suggest_region() -> String {
     let zone = std::env::var("TZ")
@@ -986,6 +1017,35 @@ fn official_image() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_download_requires_a_web_client_with_the_exact_callback() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("client.json");
+        let endpoint = "https://fleet.example/custom";
+        for (document, valid) in [
+            (json!({"installed": {"client_id": "desktop"}}), false),
+            (
+                json!({"web": {"client_id": "web", "client_secret": "secret",
+                "redirect_uris": ["https://fleet.example/v2/oauth/callback"]}}),
+                false,
+            ),
+            (
+                json!({"web": {"client_id": "web", "client_secret": " ",
+                "redirect_uris": ["https://fleet.example/custom/oauth/callback"]}}),
+                false,
+            ),
+            (
+                json!({"web": {"client_id": "web", "client_secret": "secret",
+                "redirect_uris": ["https://fleet.example/custom/oauth/callback"]}}),
+                true,
+            ),
+        ] {
+            fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+            assert_eq!(GoogleWebClient::read(&path, endpoint).is_ok(), valid);
+        }
+    }
+
     #[test]
     fn image_pins_and_region_suggestions() {
         assert!(validate_image("ghcr.io/khoek/aegis-api:latest").is_err());

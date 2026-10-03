@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Command;
 
-use aegis_types::{HostId, normalize_wireguard_ipv4, normalize_wireguard_ipv6};
+use aegis_dto::{HostId, normalize_wireguard_ipv4, normalize_wireguard_ipv6};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,7 @@ impl ManagedHostStateStore {
             let api = ApiClient::new(&api_base)?;
             super::cached_network_members_from_response(
                 api.get_hosts(api_token)?,
-                api.get_network_members(api_token, aegis_types::DEFAULT_AEGIS_NETWORK)?,
+                api.get_network_members(api_token, aegis_dto::DEFAULT_AEGIS_NETWORK)?,
             )?
             .into_iter()
             .find(|host| identity.matches(host))
@@ -77,7 +77,7 @@ impl ManagedHostStateStore {
             let mut api = AuthenticatedApiClient::load(Some(&api_base))?;
             super::cached_network_members_from_response(
                 api.get_hosts()?,
-                api.get_network_members(aegis_types::DEFAULT_AEGIS_NETWORK)?,
+                api.get_network_members(aegis_dto::DEFAULT_AEGIS_NETWORK)?,
             )?
             .into_iter()
             .find(|host| identity.matches(host))

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use aegis_types::v1::AegisPrincipalGrant;
+use aegis_dto::v1::AegisPrincipalGrant;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -169,7 +169,7 @@ mod tests {
             .expect("existing grant should validate");
         assert!(
             store
-                .reconcile(vec![aegis_types::v1::AegisPrincipalGrant {
+                .reconcile(vec![aegis_dto::v1::AegisPrincipalGrant {
                     login_principal: "ubuntu".to_string(),
                     oauth_principal: "OpaqueUserID".to_string(),
                 }])

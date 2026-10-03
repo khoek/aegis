@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use aegis_types::v1::{
+use aegis_dto::v1::{
     AegisDnsRecordKind, AegisDnsSyncRequest, AegisDnsSyncResponse, AegisEnrollmentCreateRequest,
     AegisSyncAction, AegisTlsDesiredState, AegisTlsSyncRequest, AegisTlsSyncResponse,
 };
@@ -143,7 +143,7 @@ pub(super) fn get_enrollment(
             enrollment
                 .aliases
                 .iter()
-                .map(aegis_types::HostAlias::as_str)
+                .map(aegis_dto::HostAlias::as_str)
                 .collect::<Vec<_>>()
                 .join(", ")
         );

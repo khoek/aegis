@@ -595,7 +595,7 @@ fn isolated_tunnel_end_to_end() {
             access_token: "test-agent".into(),
             refresh_token: "test-refresh".into(),
             host_id: source.host_id,
-            credential_kind: aegis_types::v1::AegisCredentialKind::Agent,
+            credential_kind: aegis_dto::v1::AegisCredentialKind::Agent,
             access_expires_at_unix: crate::config::now_unix() + 3600,
         },
         |_| Ok(()),

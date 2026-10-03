@@ -1,5 +1,5 @@
 [package]
-name = "aegis-admin"
+name = "aegis-admin-tool"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -10,8 +10,12 @@ readme = "README.md"
 repository.workspace = true
 keywords = ["cli", "ssh", "gcp", "deployment"]
 
+[[bin]]
+name = "aegis-admin"
+path = "src/main.rs"
+
 [dependencies]
-aegis-types = { workspace = true }
+aegis-dto = { workspace = true }
 aegis-tool = { workspace = true }
 
 arche-firestore = { workspace = true }

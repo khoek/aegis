@@ -1,4 +1,4 @@
-use aegis_types::AegisHostMode;
+use aegis_dto::AegisHostMode;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::cli::{EnrollArgs, UnenrollArgs};

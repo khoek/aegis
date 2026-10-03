@@ -78,7 +78,7 @@ pub struct SetupConfig {
 impl SetupOptions {
     pub fn validate(self) -> anyhow::Result<SetupConfig> {
         self.login.validate()?;
-        let endpoint = aegis_types::namespace::ApiEndpoint::parse(&self.issuer_url)
+        let endpoint = aegis_dto::namespace::ApiEndpoint::parse(&self.issuer_url)
             .map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             endpoint.namespace().is_none()
@@ -103,7 +103,7 @@ impl SetupOptions {
 }
 
 pub struct NamespaceOptions {
-    pub namespace: aegis_types::NamespaceId,
+    pub namespace: aegis_dto::NamespaceId,
     pub configuration: Value,
     pub tls_dns_suffix: String,
 }
@@ -112,7 +112,7 @@ pub struct NamespaceConfig {
 }
 impl NamespaceOptions {
     pub fn validate(self) -> anyhow::Result<NamespaceConfig> {
-        let config = serde_json::from_value::<aegis_types::configuration::NamespaceDefinition>(
+        let config = serde_json::from_value::<aegis_dto::configuration::NamespaceDefinition>(
             self.configuration.clone(),
         )?
         .validate()?;
@@ -169,7 +169,7 @@ impl Admin {
         let options = config.options;
         let identities = identity::store(&self.db)?;
         let identity = identities.load_config().await?;
-        let issuer = aegis_types::namespace::ApiEndpoint::parse(&identity.api_token.iss)
+        let issuer = aegis_dto::namespace::ApiEndpoint::parse(&identity.api_token.iss)
             .map_err(anyhow::Error::msg)?
             .with_namespace(options.namespace.clone())
             .base_url();
@@ -230,9 +230,9 @@ impl Admin {
     }
     pub async fn set_membership(
         &self,
-        namespace: aegis_types::NamespaceId,
+        namespace: aegis_dto::NamespaceId,
         user_id: &str,
-        role: Option<aegis_types::NamespaceRole>,
+        role: Option<aegis_dto::NamespaceRole>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             identity::store(&self.db)?.user(user_id).await?.is_some(),
@@ -258,7 +258,7 @@ impl Admin {
                     &parent,
                     "members",
                     user_id,
-                    &aegis_types::NamespaceMembership { role },
+                    &aegis_dto::NamespaceMembership { role },
                     None,
                     None,
                     vec![],
@@ -288,7 +288,7 @@ impl Admin {
             .collect::<Result<_, _>>()
             .map_err(Into::into)
     }
-    pub async fn members(&self, namespace: aegis_types::NamespaceId) -> anyhow::Result<Value> {
+    pub async fn members(&self, namespace: aegis_dto::NamespaceId) -> anyhow::Result<Value> {
         let parent = format!(
             "{}/v2/aegis/namespaces/{namespace}",
             self.db.inner().get_documents_path()
@@ -304,7 +304,7 @@ impl Admin {
             .await?;
         let mut members = serde_json::Map::new();
         for document in documents {
-            let member: aegis_types::NamespaceMembership =
+            let member: aegis_dto::NamespaceMembership =
                 arche_firestore::deserialize_stored_document(&document)?;
             members.insert(
                 document
@@ -318,7 +318,7 @@ impl Admin {
         }
         Ok(Value::Object(members))
     }
-    pub async fn namespaces(&self) -> anyhow::Result<Vec<aegis_types::NamespaceId>> {
+    pub async fn namespaces(&self) -> anyhow::Result<Vec<aegis_dto::NamespaceId>> {
         let docs: Vec<firestore::FirestoreDocument> = self
             .db
             .inner()
@@ -351,7 +351,7 @@ impl Admin {
 
 pub fn namespace_template() -> Value {
     json!({
-        "host_identity_schema": aegis_types::HOST_IDENTITY_SCHEMA,
+        "host_identity_schema": aegis_dto::HOST_IDENTITY_SCHEMA,
         "networks": {"aegis": {"interface": "wg-aegis", "mesh_subnet": "mesh", "overlay_mtu": 1350, "managed_ssh": true}},
         "direct_gateway": {"interface": "wg-direct", "full_tunnel_dns": ["1.1.1.1", "2606:4700:4700::1111"]},
         "egress": {"interface": "wg-egress", "network": "aegis", "dns_subnet": "egress-dns", "fwmark": 44641, "routing_table": 51823, "main_rule_priority": 11000, "egress_rule_priority": 11010},
@@ -546,7 +546,7 @@ mod emulator_tests {
             .set_membership(
                 "personal".parse()?,
                 "owner",
-                Some(aegis_types::NamespaceRole::Admin),
+                Some(aegis_dto::NamespaceRole::Admin),
             )
             .await?;
         assert_eq!(

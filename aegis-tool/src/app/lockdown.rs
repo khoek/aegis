@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use aegis_types::{
+use aegis_dto::{
     DEFAULT_AEGIS_NETWORK,
     v1::{AegisHostMessage, AegisHostMessageLevel},
 };
@@ -395,7 +395,7 @@ fn local_allowed_addresses() -> Result<Vec<String>> {
             .into_iter()
             .filter(|address| address != "127.0.0.1" && address != "::1"),
     );
-    let wireguard_directory = Path::new(aegis_types::layout::WIREGUARD_DIRECTORY);
+    let wireguard_directory = Path::new(aegis_dto::layout::WIREGUARD_DIRECTORY);
     if wireguard_directory.exists() {
         for entry in fs::read_dir(wireguard_directory)
             .with_context(|| format!("failed to read {}", wireguard_directory.display()))?

@@ -1,9 +1,9 @@
-# aegis-admin
+# aegis-admin-tool
 
 Deploy and administer Aegis with local `gcloud` credentials.
 
 ```sh
-cargo install --locked aegis-admin
+cargo install --locked aegis-admin-tool
 aegis-admin setup
 aegis-admin authorize
 ```

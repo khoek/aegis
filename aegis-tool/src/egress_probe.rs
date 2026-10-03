@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aegis_types::v1::{AegisEgressConfig, AegisEgressHost};
+use aegis_dto::v1::{AegisEgressConfig, AegisEgressHost};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use hickory_resolver::{
     TokioResolver,

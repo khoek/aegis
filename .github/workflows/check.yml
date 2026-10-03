@@ -44,7 +44,7 @@ jobs:
             if curl --silent --max-time 1 "http://$FIRESTORE_EMULATOR_HOST/" >/dev/null; then break; fi
             sleep 1
           done
-          cargo test -p aegis-admin --locked emulator -- --ignored
-          cargo test -p aegis-admin --locked --test setup -- --include-ignored
+          cargo test -p aegis-admin-tool --locked emulator -- --ignored
+          cargo test -p aegis-admin-tool --locked --test setup -- --include-ignored
           cargo test -p aegis-api --locked namespace_subtrees -- --ignored
       - run: docker build --file aegis-api/Dockerfile --tag aegis-api:check .

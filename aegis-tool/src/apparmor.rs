@@ -1,6 +1,6 @@
 use std::{fs, io::ErrorKind, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
-use aegis_types::layout::{
+use aegis_dto::layout::{
     APPARMOR_WG_QUICK_AEGIS_RULES_PATH, APPARMOR_WG_QUICK_LOCAL_PATH,
     APPARMOR_WG_QUICK_PROFILE_PATH, WIREGUARD_DIRECTORY,
 };

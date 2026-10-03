@@ -1,1 +1,1 @@
-pub use aegis_types::path::*;
+pub use aegis_dto::path::*;

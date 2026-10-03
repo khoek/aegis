@@ -2,6 +2,69 @@ use serde_json::{Value, json};
 use std::{fs, os::unix::fs::PermissionsExt, process::Command, time::Duration};
 
 #[test]
+fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("gcloud");
+    fs::write(&executable, include_str!("fixtures/gcloud.py")).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let state = dir.path().join("cloud.json");
+    let output = capulus::process::CaptureOptions::default()
+        .validate()
+        .unwrap()
+        .run(
+            Command::new(env!("CARGO_BIN_EXE_aegis-admin"))
+                .env("HOME", dir.path())
+                .env_remove("SUDO_USER")
+                .env("AEGIS_TEST_CLOUD_STATE", &state)
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        dir.path().display(),
+                        std::env::var("PATH").unwrap()
+                    ),
+                )
+                .args([
+                    "--progress",
+                    "plain",
+                    "--color",
+                    "never",
+                    "setup",
+                    "--project",
+                    "aegis-fresh-test",
+                    "--region",
+                    "australia-southeast1",
+                    "--yes",
+                    "--no-enroll",
+                ]),
+            None,
+        )
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.contains('\x1b'));
+    for expected in [
+        "https://console.cloud.google.com/auth/overview?project=aegis-fresh-test",
+        "https://console.cloud.google.com/auth/clients?project=aegis-fresh-test",
+        "Audience → Test users",
+        "https://aegis-api-1234567890.australia-southeast1.run.app/v2/oauth/callback",
+        "--oauth-client FILE",
+    ] {
+        assert!(output.stderr.contains(expected), "{}", output.stderr);
+    }
+    let cloud: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
+    let calls = cloud["calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0][0], "projects");
+    assert_eq!(calls[0][1], "describe");
+    assert!(
+        !dir.path()
+            .join(".aegis/deployments/aegis-fresh-test.json")
+            .exists()
+    );
+}
+
+#[test]
 fn administration_help_and_validation_do_not_require_a_saved_endpoint() {
     let dir = tempfile::tempdir().unwrap();
     for args in [

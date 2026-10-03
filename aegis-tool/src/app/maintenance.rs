@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use aegis_types::DEFAULT_AEGIS_NETWORK;
+use aegis_dto::DEFAULT_AEGIS_NETWORK;
 use anyhow::{Context, Result, anyhow, bail};
 use capulus::managed::{UserProgramUpdateOptions, VersionTarget};
 
@@ -92,7 +92,7 @@ impl<'a> RefreshCredentialsCommand<'a> {
         capulus::store::ensure_directory(Path::new(AEGIS_AUTHORIZED_PRINCIPALS_DIR), Some(0o755))?;
         system::Sshd::write_dropin(
             Path::new(AEGIS_SSHD_DROPIN),
-            &aegis_types::sshd_install_dropin_contents(
+            &aegis_dto::sshd_install_dropin_contents(
                 AEGIS_CLIENT_CA_PATH,
                 &format!("{AEGIS_AUTHORIZED_PRINCIPALS_DIR}/%u"),
                 Some(REMOTE_HOST_KEY_PATH),

@@ -1,6 +1,6 @@
 # Setup
 
-Install `aegis-tool`, `aegis-admin`, and the Google Cloud CLI. Sign in with `gcloud auth login`
+Install `aegis-tool`, `aegis-admin-tool`, and the Google Cloud CLI. Sign in with `gcloud auth login`
 and select a project with billing enabled. The operator needs permission to
 provision Cloud Run, Firestore, Secret Manager, IAM, Compute Engine, and IAP.
 
@@ -54,4 +54,4 @@ FILE`. This initializes identity and certificate authorities without creating Cl
 Run or Compute Engine resources. Supply the downloaded client's secret to the API
 as `AEGIS_OIDC_CLIENT_SECRET`, attach credentials with access to that database, map
 the public prefix to `/v2`, then run `aegis-admin authorize --role admin`. For a
-complete deployment with a first hub and local enrollment, use `admin setup`.
+complete deployment with a first hub and local enrollment, use `aegis-admin setup`.

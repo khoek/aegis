@@ -1,5 +1,5 @@
 [package]
-name = "aegis-types"
+name = "aegis-dto"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

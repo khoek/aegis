@@ -1,7 +1,7 @@
 use crate::config::{
     UserAuthState, load_user_auth_state, now_unix, persist_user_auth_state, resolve_api_base,
 };
-use aegis_types::{
+use aegis_dto::{
     HostAlias, HostId, path,
     v1::{
         AegisAliasResponse, AegisCredentialKind, AegisDirectClientCertRequest,
@@ -238,7 +238,7 @@ impl ApiClient {
     }
 
     fn with_options(base_url: impl Into<String>, options: ApiClientOptions) -> Result<Self> {
-        let base_url = aegis_types::namespace::ApiEndpoint::parse(&base_url.into())
+        let base_url = aegis_dto::namespace::ApiEndpoint::parse(&base_url.into())
             .map_err(anyhow::Error::msg)?;
         base_url.require_namespace().map_err(anyhow::Error::msg)?;
         let base_url = base_url.base_url();
@@ -262,7 +262,7 @@ impl ApiClient {
     pub fn get_namespace_context(
         &self,
         token: &str,
-    ) -> ApiResult<aegis_types::namespace::NamespaceContext> {
+    ) -> ApiResult<aegis_dto::namespace::NamespaceContext> {
         let response = self
             .http
             .get(
@@ -1273,13 +1273,13 @@ impl AuthenticatedApiClient {
 
     pub fn require_user_admin(&mut self, context: &str) -> Result<()> {
         let membership = self.call_authenticated(ApiClient::get_namespace_context)?;
-        if membership.role != aegis_types::NamespaceRole::Admin {
+        if membership.role != aegis_dto::NamespaceRole::Admin {
             bail!("namespace administrator required for `{context}`");
         }
         Ok(())
     }
 
-    pub fn namespace_context(&mut self) -> Result<aegis_types::namespace::NamespaceContext> {
+    pub fn namespace_context(&mut self) -> Result<aegis_dto::namespace::NamespaceContext> {
         self.call_authenticated(ApiClient::get_namespace_context)
     }
 
@@ -1601,20 +1601,20 @@ pub(crate) fn uses_local_agent(api_base_override: Option<&str>) -> Result<bool> 
     let Some(installed) = installed_agent_api_base()? else {
         return Ok(false);
     };
-    let selected = aegis_types::namespace::ApiEndpoint::parse(
+    let selected = aegis_dto::namespace::ApiEndpoint::parse(
         &resolve_api_base(api_base_override, Some(&installed)).unwrap(),
     )
     .map_err(anyhow::Error::msg)?;
     selected.require_namespace().map_err(anyhow::Error::msg)?;
     let installed =
-        aegis_types::namespace::ApiEndpoint::parse(&installed).map_err(anyhow::Error::msg)?;
+        aegis_dto::namespace::ApiEndpoint::parse(&installed).map_err(anyhow::Error::msg)?;
     Ok(selected == installed)
 }
 
 pub fn start_browser_login(api_base: &str, redirect_uri: &Url) -> Result<BrowserLoginStart> {
     let auth_url = AuthUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_AUTHORIZE
@@ -1622,7 +1622,7 @@ pub fn start_browser_login(api_base: &str, redirect_uri: &Url) -> Result<Browser
     .context("invalid oauth authorization endpoint")?;
     let token_url = TokenUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_TOKEN
@@ -1658,7 +1658,7 @@ pub fn finish_browser_login(
 ) -> Result<UserAuthState> {
     let auth_url = AuthUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_AUTHORIZE
@@ -1666,7 +1666,7 @@ pub fn finish_browser_login(
     .context("invalid oauth authorization endpoint")?;
     let token_url = TokenUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_TOKEN
@@ -1727,7 +1727,7 @@ fn validate_user_auth_state(auth_state: &UserAuthState) -> Result<()> {
 fn exchange_refresh_token(api_base: &str, refresh_token: &str, now: i64) -> Result<UserAuthState> {
     let auth_url = AuthUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_AUTHORIZE
@@ -1735,7 +1735,7 @@ fn exchange_refresh_token(api_base: &str, refresh_token: &str, now: i64) -> Resu
     .context("invalid oauth authorization endpoint")?;
     let token_url = TokenUrl::new(format!(
         "{}{}",
-        aegis_types::namespace::ApiEndpoint::parse(api_base)
+        aegis_dto::namespace::ApiEndpoint::parse(api_base)
             .map_err(anyhow::Error::msg)?
             .service_url(),
         oauth::path::OAUTH_TOKEN
@@ -1819,7 +1819,7 @@ mod tests {
         AuthenticatedApiClient, auth_state_from_token_response, start_browser_login,
     };
     use crate::config::UserAuthState;
-    use aegis_types::{
+    use aegis_dto::{
         HostId, path,
         v1::{
             AegisAgentHealth, AegisAgentStatus, AegisDirectGatewayReport, AegisHostReportRequest,

@@ -1,4 +1,4 @@
-use aegis_types::{AegisHostMode, HostId, v1::AegisMeshConfig};
+use aegis_dto::{AegisHostMode, HostId, v1::AegisMeshConfig};
 use anyhow::{Result, bail};
 use capulus::shell::shell_quote as sh_quote;
 

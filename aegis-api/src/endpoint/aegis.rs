@@ -10,7 +10,7 @@ use crate::{
     config::{AegisConfig, ClientCaConfig, DirectClientCaConfig, ServerCaConfig, TlsConfig},
     firestore::{AegisDb, fetch_tls_cert_config, put_tls_cert_public_key, sync_tls_cert_configs},
 };
-use aegis_types::v1::{
+use aegis_dto::v1::{
     AegisAgentReport, AegisAgentStatus, AegisAliasResponse, AegisDirectClientCertRequest,
     AegisDirectClientCertResponse, AegisDirectGateway, AegisDirectGatewayConfig,
     AegisDirectGatewayInventory, AegisDirectGatewayPublishRequest, AegisDirectGatewayReport,
@@ -31,7 +31,7 @@ use aegis_types::v1::{
     AegisSatelliteProvisionResponse, AegisSatelliteStatus, AegisTlsSyncRequest,
     AegisTlsSyncResponse,
 };
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode, DEFAULT_AEGIS_ENROLLMENT_TTL_SECONDS, HostAlias, HostAliases, HostId,
     normalize_wireguard_ipv4, normalize_wireguard_ipv6, normalize_wireguard_key,
     v1::{
@@ -103,7 +103,7 @@ pub struct AegisState<S = AegisDb> {
     pub api_issuer: String,
     pub api_audience: String,
     pub user_api_audience: String,
-    pub namespace: aegis_types::NamespaceId,
+    pub namespace: aegis_dto::NamespaceId,
     pub cfg: AegisConfig,
 }
 
@@ -231,7 +231,7 @@ pub(crate) struct AegisStateParts<'a, S> {
     pub api_issuer: &'a str,
     pub api_audience: &'a str,
     pub user_api_audience: &'a str,
-    pub namespace: aegis_types::NamespaceId,
+    pub namespace: aegis_dto::NamespaceId,
     pub cfg: &'a AegisConfig,
 }
 
@@ -457,7 +457,7 @@ impl CredentialSessionStore for FirestoreAuthStore {
 
 #[cfg(test)]
 mod tests_refactor {
-    use aegis_types::v1::{
+    use aegis_dto::v1::{
         AegisAgentHealth, AegisAgentStatus, AegisDirectClientCertRequest,
         AegisDirectClientCertResponse, AegisDirectGatewayConfig, AegisDirectGatewayInventory,
         AegisDirectGatewayPublishRequest, AegisDirectGatewayReport, AegisDirectPeerObservation,
@@ -501,7 +501,7 @@ mod tests_refactor {
         },
         path,
     };
-    use aegis_types::{
+    use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
         v1::{
             AegisAliasResponse, AegisEnrollment, AegisEnrollmentActivateResponse,
@@ -683,9 +683,9 @@ mod tests_refactor {
                     resource: existing.slug.clone(),
                 });
             }
-            let reserved_ipv4 = aegis_types::wireguard_ipv4_for_host_id(pool, 1)
+            let reserved_ipv4 = aegis_dto::wireguard_ipv4_for_host_id(pool, 1)
                 .map_err(|error| AegisDirectWriteError::Internal(anyhow::anyhow!(error)))?;
-            let reserved_ipv6 = aegis_types::wireguard_ipv6_for_host_id(pool, 1)
+            let reserved_ipv6 = aegis_dto::wireguard_ipv6_for_host_id(pool, 1)
                 .map_err(|error| AegisDirectWriteError::Internal(anyhow::anyhow!(error)))?;
             let mut used = vec![(reserved_ipv4.as_str(), reserved_ipv6.as_str())];
             used.extend(satellites.values().map(|satellite| {
@@ -694,13 +694,13 @@ mod tests_refactor {
                     satellite.wireguard.ipv6.as_str(),
                 )
             }));
-            let host_id = aegis_types::allocate_lowest_free_wireguard_host_id(pool, used)
+            let host_id = aegis_dto::allocate_lowest_free_wireguard_host_id(pool, used)
                 .map_err(|error| AegisDirectWriteError::Internal(anyhow::anyhow!(error)))?;
             drop(satellites);
             let mut stored = wireguard.clone();
-            stored.ipv4 = aegis_types::wireguard_ipv4_for_host_id(pool, host_id)
+            stored.ipv4 = aegis_dto::wireguard_ipv4_for_host_id(pool, host_id)
                 .map_err(|error| AegisDirectWriteError::Internal(anyhow::anyhow!(error)))?;
-            stored.ipv6 = aegis_types::wireguard_ipv6_for_host_id(pool, host_id)
+            stored.ipv6 = aegis_dto::wireguard_ipv6_for_host_id(pool, host_id)
                 .map_err(|error| AegisDirectWriteError::Internal(anyhow::anyhow!(error)))?;
             Ok(stored)
         }
@@ -1589,7 +1589,7 @@ mod tests_refactor {
                     IpAddr::V6(_) => &mut host.observed_public_ips.ipv6,
                 };
                 if current.as_ref().map(|observed| observed.ip.as_str()) != Some(ip_text.as_str()) {
-                    *current = Some(aegis_types::v1::AegisObservedPublicIp {
+                    *current = Some(aegis_dto::v1::AegisObservedPublicIp {
                         ip: ip_text,
                         observed_unix,
                     });
@@ -2538,7 +2538,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::OK, response.status());
-        let resolved: aegis_types::v1::AegisAliasResponse = json_body(response).await;
+        let resolved: aegis_dto::v1::AegisAliasResponse = json_body(response).await;
         assert_eq!(alpha_id, resolved.host_id);
 
         let response = app
@@ -3406,7 +3406,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::CONFLICT, response.status());
-        let error: aegis_types::v1::ErrorResponse = json_body(response).await;
+        let error: aegis_dto::v1::ErrorResponse = json_body(response).await;
         assert_eq!(
             "satellite gateways have not reported ready: hub-a",
             error.error
@@ -3427,7 +3427,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::OK, response.status());
-        let hub: aegis_types::v1::AegisDirectGateway = json_body(response).await;
+        let hub: aegis_dto::v1::AegisDirectGateway = json_body(response).await;
         assert_eq!("10.77.1.1", hub.wireguard.ipv4);
         assert_eq!("fd77::1:1", hub.wireguard.ipv6);
         assert_eq!(
@@ -3605,7 +3605,7 @@ mod tests_refactor {
                 .map(String::as_str)
         );
         assert_eq!(
-            Some(aegis_types::layout::SYSTEM_BINARY_PATH.to_string() + " ssh"),
+            Some(aegis_dto::layout::SYSTEM_BINARY_PATH.to_string() + " ssh"),
             certificate.critical_options().get("force-command").cloned()
         );
         assert_eq!(
@@ -4383,7 +4383,7 @@ mod tests_refactor {
             )
             .expect("network member should seed");
         let app = test_app(store.clone());
-        let body = aegis_types::v1::AegisEgressIdentityRequest {
+        let body = aegis_dto::v1::AegisEgressIdentityRequest {
             public_key: TEST_GATEWAY_WIREGUARD_KEY.to_string(),
         };
         let response = app
@@ -5088,7 +5088,7 @@ where
             state.cfg.egress.network
         ))
     })?;
-    let internal_pool = aegis_types::v1::AegisWireGuardAddressPool {
+    let internal_pool = aegis_dto::v1::AegisWireGuardAddressPool {
         subnet_ipv4: mesh.subnet_ipv4.clone(),
         subnet_ipv6: mesh.subnet_ipv6.clone(),
     };
@@ -5136,7 +5136,7 @@ where
             ) else {
                 continue;
             };
-            let host_id = aegis_types::wireguard_host_id_from_addresses(
+            let host_id = aegis_dto::wireguard_host_id_from_addresses(
                 &internal_pool,
                 internal_ipv4,
                 internal_ipv6,
@@ -5146,15 +5146,15 @@ where
                 host_id: member.host_id,
                 aliases: host.aliases.clone(),
                 public_key: public_key.clone(),
-                ipv4: aegis_types::wireguard_ipv4_for_host_id(&egress_pool, host_id)
+                ipv4: aegis_dto::wireguard_ipv4_for_host_id(&egress_pool, host_id)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
-                ipv6: aegis_types::wireguard_ipv6_for_host_id(&egress_pool, host_id)
+                ipv6: aegis_dto::wireguard_ipv6_for_host_id(&egress_pool, host_id)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
                 internal_ipv4: internal_ipv4.clone(),
                 internal_ipv6: internal_ipv6.clone(),
-                dns_ipv4: aegis_types::wireguard_ipv4_for_host_id(&dns_pool, host_id)
+                dns_ipv4: aegis_dto::wireguard_ipv4_for_host_id(&dns_pool, host_id)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
-                dns_ipv6: aegis_types::wireguard_ipv6_for_host_id(&dns_pool, host_id)
+                dns_ipv6: aegis_dto::wireguard_ipv6_for_host_id(&dns_pool, host_id)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
             };
             inventory_hosts.insert(host.host_id, host);
@@ -5377,9 +5377,9 @@ where
             wireguard: AegisDirectWireGuardRecord {
                 public_key: normalize_wireguard_key(&request.public_key)
                     .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-                ipv4: aegis_types::wireguard_ipv4_for_host_id(&pool, 1)
+                ipv4: aegis_dto::wireguard_ipv4_for_host_id(&pool, 1)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
-                ipv6: aegis_types::wireguard_ipv6_for_host_id(&pool, 1)
+                ipv6: aegis_dto::wireguard_ipv6_for_host_id(&pool, 1)
                     .map_err(|error| ApiError::Internal(anyhow::anyhow!(error)))?,
                 endpoints,
             },
@@ -5436,7 +5436,7 @@ where
         .collect::<BTreeMap<_, _>>();
     Ok(state
         .store
-        .list_aegis_network_members(aegis_types::DEFAULT_AEGIS_NETWORK)
+        .list_aegis_network_members(aegis_dto::DEFAULT_AEGIS_NETWORK)
         .await
         .map_err(ApiError::Internal)?
         .into_iter()
@@ -5909,7 +5909,7 @@ where
     let mut targets = Vec::new();
     for member in state
         .store
-        .list_aegis_network_members(aegis_types::DEFAULT_AEGIS_NETWORK)
+        .list_aegis_network_members(aegis_dto::DEFAULT_AEGIS_NETWORK)
         .await
         .map_err(ApiError::Internal)?
     {
@@ -6719,17 +6719,17 @@ pub async fn put_tls_certificate_public_key(
 pub async fn get_namespace_context<S>(
     State(state): State<AegisState<S>>,
     headers: HeaderMap,
-) -> Result<Json<aegis_types::namespace::NamespaceContext>, ApiError>
+) -> Result<Json<aegis_dto::namespace::NamespaceContext>, ApiError>
 where
     S: AegisStore + Clone + Send + Sync + 'static,
 {
     let user = UserBearer::from_headers(&headers, &state).await?;
-    Ok(Json(aegis_types::namespace::NamespaceContext {
+    Ok(Json(aegis_dto::namespace::NamespaceContext {
         namespace: state.namespace,
         role: if user.admin {
-            aegis_types::NamespaceRole::Admin
+            aegis_dto::NamespaceRole::Admin
         } else {
-            aegis_types::NamespaceRole::Member
+            aegis_dto::NamespaceRole::Member
         },
     }))
 }
@@ -7708,7 +7708,7 @@ fn host_summary_from_record(record: AegisHostRecord) -> Result<AegisHost, ApiErr
             external_principals: ssh.external_principals,
         }),
         egress: egress_public_key.map(|public_key| AegisHostEgress { public_key }),
-        report: aegis_types::v1::AegisHostReport {
+        report: aegis_dto::v1::AegisHostReport {
             messages,
             agent,
             ssh_lockdown_enabled: record.ssh_lockdown_enabled.unwrap_or(false),
@@ -7760,7 +7760,7 @@ fn network_member_summary_from_record(
     };
     let internal = match (record.internal_ipv4, record.internal_ipv6) {
         (Some(ipv4), Some(ipv6)) => {
-            Some(aegis_types::v1::AegisNetworkMemberInternalAddresses { ipv4, ipv6 })
+            Some(aegis_dto::v1::AegisNetworkMemberInternalAddresses { ipv4, ipv6 })
         }
         (None, None) => None,
         (ipv4, ipv6) => {
@@ -8174,7 +8174,7 @@ fn normalize_agent_report(
     }
     Ok(AegisAgentStatus {
         version,
-        health: aegis_types::v1::AegisAgentHealth {
+        health: aegis_dto::v1::AegisAgentHealth {
             boot_id: boot_id.to_string(),
             reconciled_since_boot: report.health.reconciled_since_boot,
             applied_aliases: report.health.applied_aliases,
@@ -8343,7 +8343,7 @@ fn resolve_server_cert_principals(
     Ok(ServerCertPrincipals { internal, combined })
 }
 
-fn host_dns_principals(aliases: &aegis_types::HostAliases, suffix: Option<&str>) -> Vec<String> {
+fn host_dns_principals(aliases: &aegis_dto::HostAliases, suffix: Option<&str>) -> Vec<String> {
     let suffix = suffix
         .map(str::trim)
         .filter(|suffix| !suffix.is_empty())
@@ -8486,7 +8486,7 @@ fn sign_direct_user_certificate(
     builder
         .critical_option(
             "force-command".to_string(),
-            format!("{} ssh", aegis_types::layout::SYSTEM_BINARY_PATH),
+            format!("{} ssh", aegis_dto::layout::SYSTEM_BINARY_PATH),
         )
         .map_err(|error| ApiError::BadRequest(format!("force-command: {error}")))?;
     builder
@@ -8540,7 +8540,7 @@ fn sign_host_certificate(
 }
 
 fn validate_satellite_slug(slug: &str) -> Result<(), ApiError> {
-    aegis_types::validate_satellite_slug(slug)
+    aegis_dto::validate_satellite_slug(slug)
         .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 

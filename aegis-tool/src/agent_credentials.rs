@@ -1,4 +1,4 @@
-use aegis_types::v1::{AegisHostMessage, AegisHostMessageLevel};
+use aegis_dto::v1::{AegisHostMessage, AegisHostMessageLevel};
 use anyhow::{Result, bail};
 
 use crate::api::AgentAccessState;
@@ -92,7 +92,7 @@ mod tests {
     fn access(refresh_token: &str) -> AgentAccessState {
         AgentAccessState {
             host_id: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            credential_kind: aegis_types::v1::AegisCredentialKind::Agent,
+            credential_kind: aegis_dto::v1::AegisCredentialKind::Agent,
             refresh_token: refresh_token.into(),
             access_token: "access".into(),
             access_expires_at_unix: 300,

@@ -1,10 +1,10 @@
-pub use aegis_types::identity::LoginConfiguration;
+pub use aegis_dto::identity::LoginConfiguration;
 use arche_firestore::{Db, load_optional_typed_at};
 use phylax_gcp::identity::{IdentityOptions, IdentityStore};
 
 pub(crate) fn store(db: &Db) -> anyhow::Result<IdentityStore> {
     Ok(IdentityOptions {
-        document_path: aegis_types::identity::IDENTITY_DOCUMENT.into(),
+        document_path: aegis_dto::identity::IDENTITY_DOCUMENT.into(),
     }
     .validate()?
     .connect(db.clone()))

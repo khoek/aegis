@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use aegis_types::{
+use aegis_dto::{
     HostAlias, HostId,
     v1::{
         AegisDirectGateway, AegisSatellite, AegisSatelliteCreateRequest,
@@ -702,7 +702,7 @@ struct SshImport<'a> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use aegis_types::{
+    use aegis_dto::{
         HostAlias, HostAliases, HostId,
         v1::{
             AegisDirectGateway, AegisDirectGatewayConfig, AegisDirectWireGuard, AegisSatellite,

@@ -1,4 +1,4 @@
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases, HostId,
     v1::{
         AegisAgentStatus, AegisDirectGatewayReport, AegisEnrollmentPhase, AegisEnrollmentSsh,
@@ -314,7 +314,7 @@ pub(crate) enum AegisEgressWriteError {
 #[derive(Clone, Debug)]
 pub(crate) struct AegisEgressSnapshot {
     pub generation: u64,
-    pub policies: Vec<aegis_types::v1::AegisEgressPolicy>,
+    pub policies: Vec<aegis_dto::v1::AegisEgressPolicy>,
 }
 
 #[derive(Debug, Error)]
@@ -347,7 +347,7 @@ pub(crate) enum AegisAliasWriteError {
     #[error("host `{host_id}` does not have alias `{alias}`")]
     AliasNotFound { host_id: HostId, alias: HostAlias },
     #[error("{0}")]
-    InvalidAliases(#[from] aegis_types::InvalidHostAliases),
+    InvalidAliases(#[from] aegis_dto::InvalidHostAliases),
     #[error("host alias update changed concurrently")]
     ConcurrentWrite,
     #[error(transparent)]
@@ -440,14 +440,14 @@ pub(crate) trait AegisStore {
     async fn fetch_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
-    ) -> anyhow::Result<Option<aegis_types::v1::AegisEgressPolicy>>;
+    ) -> anyhow::Result<Option<aegis_dto::v1::AegisEgressPolicy>>;
 
     async fn compare_and_set_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
         expected_generation: u64,
         expected_revision: Option<u64>,
-        replacement: Option<&aegis_types::v1::AegisEgressPolicy>,
+        replacement: Option<&aegis_dto::v1::AegisEgressPolicy>,
     ) -> Result<(), AegisEgressWriteError>;
 
     async fn list_aegis_direct_gateways(&self) -> anyhow::Result<Vec<AegisDirectGatewayRecord>>;
@@ -537,7 +537,7 @@ pub(crate) trait AegisStore {
 
 #[cfg(test)]
 mod tests {
-    use aegis_types::v1::{AegisDirectGatewayReport, AegisDirectPeerObservation};
+    use aegis_dto::v1::{AegisDirectGatewayReport, AegisDirectPeerObservation};
 
     use super::merge_direct_gateway_handshakes;
 

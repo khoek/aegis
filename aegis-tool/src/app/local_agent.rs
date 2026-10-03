@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
-use aegis_types::{
+use aegis_dto::{
     layout::AGENT_CONFIG_PATH,
     v1::{
         AegisDirectClientCertRequest, AegisDirectClientCertResponse, AegisDirectTargetListResponse,
@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use reqwest::{StatusCode, blocking::Client as HttpClient};
 use serde::{Deserialize, Serialize};
 
-use aegis_types::DEFAULT_AEGIS_NETWORK;
+use aegis_dto::DEFAULT_AEGIS_NETWORK;
 
 use crate::agent::{
     AEGIS_AGENT_DIRECT_CLIENT_CERT_PATH, AEGIS_AGENT_DIRECT_TARGETS_PATH, AEGIS_AGENT_EGRESS_PATH,

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use aegis_types::{
+use aegis_dto::{
     AegisHostMode, DEFAULT_AEGIS_NETWORK, HostAlias, HostId, layout::AGENT_CONFIG_PATH,
     normalize_wireguard_key,
 };
@@ -59,24 +59,23 @@ use enroll_target::{EnrollTarget, EnrollmentPlan, RemoteTarget};
 
 const AEGIS_DIR_ETC: &str = "/etc/ssh/aegis";
 const AEGIS_CLIENT_CA_PATH: &str = "/etc/ssh/aegis/client_ca.pub";
-const AEGIS_AUTHORIZED_PRINCIPALS_DIR: &str = aegis_types::layout::AUTHORIZED_PRINCIPALS_DIRECTORY;
+const AEGIS_AUTHORIZED_PRINCIPALS_DIR: &str = aegis_dto::layout::AUTHORIZED_PRINCIPALS_DIRECTORY;
 const AEGIS_STATE_PATH: &str = "/etc/ssh/aegis/state.toml";
 const AEGIS_SSHD_DROPIN: &str = "/etc/ssh/sshd_config.d/90-aegis.conf";
 const AEGIS_LOCKDOWN_DROPIN: &str = "/etc/ssh/sshd_config.d/95-aegis-lockdown.conf";
-const AEGIS_AGENT_DIR: &str = aegis_types::layout::STATE_DIRECTORY;
-const SYSTEM_AEGIS_BIN: &str = aegis_types::layout::SYSTEM_BINARY_PATH;
+const AEGIS_AGENT_DIR: &str = aegis_dto::layout::STATE_DIRECTORY;
+const SYSTEM_AEGIS_BIN: &str = aegis_dto::layout::SYSTEM_BINARY_PATH;
 const REMOTE_HOST_KEY_PATH: &str = "/etc/ssh/ssh_host_ed25519_key";
 const REMOTE_HOST_CERT_PATH: &str = "/etc/ssh/ssh_host_ed25519_key-cert.pub";
-const WIREGUARD_DIR: &str = aegis_types::layout::WIREGUARD_DIRECTORY;
+const WIREGUARD_DIR: &str = aegis_dto::layout::WIREGUARD_DIRECTORY;
 const WIREGUARD_INTERFACE: &str = "wg-aegis";
 const WIREGUARD_CONFIG_PATH: &str = "/etc/aegis/wireguard/wg-aegis.conf";
 const WIREGUARD_PRIVATE_KEY_PATH: &str = "/etc/aegis/wireguard/wg-aegis.key";
 const WIREGUARD_PUBLIC_KEY_PATH: &str = "/etc/aegis/wireguard/wg-aegis.pub";
-const WIREGUARD_UNIT_TEMPLATE_PATH: &str =
-    aegis_types::layout::WIREGUARD_SYSTEMD_UNIT_TEMPLATE_PATH;
-const WIREGUARD_UNIT_PREFIX: &str = aegis_types::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
-const AEGIS_AGENT_UNIT_PATH: &str = aegis_types::layout::AGENT_SYSTEMD_UNIT_PATH;
-pub(crate) const AEGIS_AGENT_SERVICE_NAME: &str = aegis_types::layout::AGENT_SYSTEMD_SERVICE_NAME;
+const WIREGUARD_UNIT_TEMPLATE_PATH: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_TEMPLATE_PATH;
+const WIREGUARD_UNIT_PREFIX: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
+const AEGIS_AGENT_UNIT_PATH: &str = aegis_dto::layout::AGENT_SYSTEMD_UNIT_PATH;
+pub(crate) const AEGIS_AGENT_SERVICE_NAME: &str = aegis_dto::layout::AGENT_SYSTEMD_SERVICE_NAME;
 const BIRD_CONFIG_PATH: &str = "/etc/bird/bird.conf";
 const BIRD_SERVICE_NAME: &str = "bird";
 const AEGIS_AGENT_REFRESH_TOKEN_ENV: &str = "AEGIS_AGENT_REFRESH_TOKEN_B64";
@@ -151,7 +150,7 @@ fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
                 crate::api::installed_agent_api_base()?.as_deref(),
             )?;
             Some(
-                aegis_types::namespace::ApiEndpoint::parse(&base)
+                aegis_dto::namespace::ApiEndpoint::parse(&base)
                     .map_err(anyhow::Error::msg)?
                     .with_namespace(namespace)
                     .base_url(),
@@ -339,8 +338,8 @@ fn advanced_command_system_lock_policy(command: &AdvancedCommands) -> SystemLock
 }
 
 fn cached_network_members_from_response(
-    hosts: aegis_types::v1::AegisHostListResponse,
-    response: aegis_types::v1::AegisNetworkMemberListResponse,
+    hosts: aegis_dto::v1::AegisHostListResponse,
+    response: aegis_dto::v1::AegisNetworkMemberListResponse,
 ) -> Result<Vec<CachedHost>> {
     response
         .members
@@ -355,7 +354,7 @@ fn cached_network_members_from_response(
             Ok(CachedHost {
                 host_id,
                 aliases,
-                host: aegis_types::v1::AegisNetworkHost::resolve(host, member),
+                host: aegis_dto::v1::AegisNetworkHost::resolve(host, member),
             })
         })
         .collect()
@@ -559,7 +558,7 @@ fn remove_local_aegis_management(
         },
     };
     system::Sshd::remove_dropin(Path::new(AEGIS_LOCKDOWN_DROPIN))?;
-    system::Sshd::remove_dropin(Path::new(aegis_types::layout::DIRECT_SSHD_DROPIN_PATH))?;
+    system::Sshd::remove_dropin(Path::new(aegis_dto::layout::DIRECT_SSHD_DROPIN_PATH))?;
     system::Sshd::remove_dropin(Path::new(AEGIS_SSHD_DROPIN))?;
     system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).disable_now()?;
     system::SystemdUnit::new(crate::managed::MANAGEMENT_SOCKET_NAME).disable_now()?;
@@ -609,20 +608,20 @@ fn remove_local_aegis_management(
 }
 
 fn remove_local_egress_policy() -> Result<()> {
-    let script = Path::new(aegis_types::layout::EGRESS_POLICY_SCRIPT_PATH);
+    let script = Path::new(aegis_dto::layout::EGRESS_POLICY_SCRIPT_PATH);
     if script.exists() {
         system::LocalRoot::run_script(&format!(
             "/bin/bash {} remove\n",
-            sh_quote(aegis_types::layout::EGRESS_POLICY_SCRIPT_PATH)
+            sh_quote(aegis_dto::layout::EGRESS_POLICY_SCRIPT_PATH)
         ))?;
     }
-    system::SystemdUnit::new(aegis_types::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME)
+    system::SystemdUnit::new(aegis_dto::layout::EGRESS_POLICY_SYSTEMD_SERVICE_NAME)
         .disable_now()?;
     system::TextFile::new(Path::new(
-        aegis_types::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH,
+        aegis_dto::layout::EGRESS_POLICY_SYSTEMD_UNIT_PATH,
     ))
     .remove_if_exists()?;
-    let resolved_dropin = Path::new(aegis_types::layout::EGRESS_RESOLVED_DROPIN_PATH);
+    let resolved_dropin = Path::new(aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH);
     let restart_resolved = resolved_dropin.exists();
     system::TextFile::new(resolved_dropin).remove_if_exists()?;
     if restart_resolved {
@@ -653,7 +652,7 @@ fn managed_wireguard_interfaces_in(directory: &Path) -> Result<Vec<String>> {
         let Some(interface) = file_name.strip_suffix(".conf") else {
             continue;
         };
-        aegis_types::validate_wireguard_interface_name(interface).with_context(|| {
+        aegis_dto::validate_wireguard_interface_name(interface).with_context(|| {
             format!(
                 "managed WireGuard configuration {} has an invalid interface name",
                 entry.path().display()
@@ -750,7 +749,7 @@ struct EnrollApi {
 }
 
 impl EnrollApi {
-    fn load(invitation: &aegis_types::v1::AegisEnrollmentCredentialResponse) -> Result<Self> {
+    fn load(invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse) -> Result<Self> {
         let client = HostAgentApiClient::from_refresh_token(
             &invitation.api_base,
             &invitation.refresh_token,
@@ -765,7 +764,7 @@ impl EnrollApi {
         self.client.host_id()
     }
 
-    fn credential_kind(&self) -> aegis_types::v1::AegisCredentialKind {
+    fn credential_kind(&self) -> aegis_dto::v1::AegisCredentialKind {
         self.client.credential_kind()
     }
 
@@ -773,13 +772,13 @@ impl EnrollApi {
         self.client.refresh_token()
     }
 
-    fn enrollment(&mut self) -> Result<aegis_types::v1::AegisEnrollment> {
+    fn enrollment(&mut self) -> Result<aegis_dto::v1::AegisEnrollment> {
         self.client.get_enrollment()
     }
 
-    fn heartbeat(&mut self, phase: aegis_types::v1::AegisEnrollmentPhase) -> Result<()> {
+    fn heartbeat(&mut self, phase: aegis_dto::v1::AegisEnrollmentPhase) -> Result<()> {
         self.client
-            .heartbeat_enrollment(&aegis_types::v1::AegisEnrollmentHeartbeatRequest { phase })?;
+            .heartbeat_enrollment(&aegis_dto::v1::AegisEnrollmentHeartbeatRequest { phase })?;
         Ok(())
     }
 
@@ -787,16 +786,16 @@ impl EnrollApi {
         &mut self,
         identity: &EnrollTargetIdentity,
         wireguard_endpoints: Vec<String>,
-    ) -> Result<aegis_types::v1::AegisEnrollmentPrepareResponse> {
+    ) -> Result<aegis_dto::v1::AegisEnrollmentPrepareResponse> {
         self.client
-            .prepare_enrollment(&aegis_types::v1::AegisEnrollmentPrepareRequest {
+            .prepare_enrollment(&aegis_dto::v1::AegisEnrollmentPrepareRequest {
                 host_public_key: identity.host_public_key.clone(),
                 wireguard_public_key: identity.wireguard_public_key.clone(),
                 wireguard_endpoints,
             })
     }
 
-    fn activate(&mut self) -> Result<aegis_types::v1::AegisEnrollmentActivateResponse> {
+    fn activate(&mut self) -> Result<aegis_dto::v1::AegisEnrollmentActivateResponse> {
         self.client.activate_enrollment()
     }
 }
@@ -861,7 +860,7 @@ fn run_enroll(api_base_override: Option<&str>, args: &EnrollArgs) -> Result<i32>
 }
 
 fn run_enroll_invitation(
-    invitation: &aegis_types::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
     plan: &EnrollmentPlan,
 ) -> Result<i32> {
     if matches!(plan.target, EnrollTarget::Local(_))
@@ -952,7 +951,7 @@ impl EnrollmentProgress {
 }
 
 fn run_enroll_with_target(
-    invitation: &aegis_types::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
     plan: &EnrollmentPlan,
     remote_session: Option<&dyn remote::RemoteBootstrapSession>,
 ) -> Result<i32> {
@@ -966,7 +965,7 @@ fn run_enroll_with_target(
         visibility: TaskVisibility::Immediate,
         ..TaskOptions::default()
     })?;
-    if api.credential_kind() == aegis_types::v1::AegisCredentialKind::Agent {
+    if api.credential_kind() == aegis_dto::v1::AegisCredentialKind::Agent {
         return recover_activated_enrollment(&api_base, &api, plan, remote_session, workflow);
     }
 
@@ -990,7 +989,7 @@ fn run_enroll_with_target(
     let mut progress = EnrollmentProgress::new();
 
     let result = (|| -> Result<i32> {
-        api.heartbeat(aegis_types::v1::AegisEnrollmentPhase::PreparingMachine)?;
+        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::PreparingMachine)?;
         let identity = prepare_enroll_target_identity(
             target,
             remote_session,
@@ -1005,7 +1004,7 @@ fn run_enroll_with_target(
         let pending_host = CachedHost {
             host_id,
             aliases: prepared.host.aliases.clone(),
-            host: aegis_types::v1::AegisNetworkHost::resolve(prepared.host.clone(), pending_member),
+            host: aegis_dto::v1::AegisNetworkHost::resolve(prepared.host.clone(), pending_member),
         };
         let (wireguard_ipv4, wireguard_ipv6) = host::host_wireguard_identity(&pending_host)?;
         let mesh = prepared.network.mesh.as_ref().ok_or_else(|| {
@@ -1045,7 +1044,7 @@ fn run_enroll_with_target(
             .configure_system()?;
         }
 
-        api.heartbeat(aegis_types::v1::AegisEnrollmentPhase::InstallingAgent)?;
+        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::InstallingAgent)?;
         workflow.set_phase(format!("installing Aegis on {target_label}"));
         match target {
             EnrollTarget::Local(_) => {
@@ -1084,7 +1083,7 @@ fn run_enroll_with_target(
             }
         }
 
-        api.heartbeat(aegis_types::v1::AegisEnrollmentPhase::Activating)?;
+        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::Activating)?;
         workflow.set_phase("activating host in the Aegis control plane");
         progress.begin_activation();
         let activated = api.activate()?;
@@ -1131,8 +1130,8 @@ fn run_enroll_with_target(
 }
 
 fn validate_prepared_enrollment(
-    expected: &aegis_types::v1::AegisEnrollment,
-    prepared: &aegis_types::v1::AegisEnrollmentPrepareResponse,
+    expected: &aegis_dto::v1::AegisEnrollment,
+    prepared: &aegis_dto::v1::AegisEnrollmentPrepareResponse,
 ) -> Result<()> {
     if prepared.enrollment.host_id != expected.host_id
         || prepared.member.host_id != expected.host_id
@@ -1153,7 +1152,7 @@ fn validate_prepared_enrollment(
 
 fn validate_activation_response(
     host_id: HostId,
-    activated: &aegis_types::v1::AegisEnrollmentActivateResponse,
+    activated: &aegis_dto::v1::AegisEnrollmentActivateResponse,
 ) -> Result<()> {
     if activated.member.host_id != host_id
         || activated.host.pending
@@ -1440,7 +1439,7 @@ pub fn check_local_enrollment_platform() -> Result<()> {
     Ok(())
 }
 
-pub fn local_machine_ready(api_base: &str, expected: Option<&aegis_types::HostId>) -> Result<bool> {
+pub fn local_machine_ready(api_base: &str, expected: Option<&aegis_dto::HostId>) -> Result<bool> {
     if let Some(context) = crate::config::AgentContext::load()? {
         anyhow::ensure!(
             context.api_base == api_base,
@@ -1533,7 +1532,7 @@ mod tests {
         TunnelCommands, TunnelStatusArgs, UnenrollArgs,
     };
     use crate::config::{CachedHost, now_unix};
-    use aegis_types::{
+    use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
         v1::{
             AegisAgentHealth, AegisAgentStatus, AegisHostMessage, AegisHostMessageLevel,
@@ -1576,7 +1575,7 @@ mod tests {
         CachedHost {
             host_id: host_id("alpha"),
             aliases: aliases("alpha"),
-            host: aegis_types::v1::AegisNetworkHost {
+            host: aegis_dto::v1::AegisNetworkHost {
                 mode: AegisHostMode::Leaf,
                 ssh: Some(AegisNetworkHostSsh {
                     port: Some(22),
@@ -1598,7 +1597,7 @@ mod tests {
                 messages: Vec::new(),
                 agent: Some(sample_agent_status(env!("CARGO_PKG_VERSION"), now_unix())),
                 ssh_lockdown_enabled: false,
-                observed_public_ips: aegis_types::v1::AegisObservedPublicIps::default(),
+                observed_public_ips: aegis_dto::v1::AegisObservedPublicIps::default(),
                 transient: false,
                 pending: false,
                 updated_unix: 1,
@@ -2408,7 +2407,7 @@ mod tests {
 
     #[test]
     fn install_dropin_contents_without_server_cert_omits_host_directives() {
-        let content = aegis_types::sshd_install_dropin_contents(
+        let content = aegis_dto::sshd_install_dropin_contents(
             AEGIS_CLIENT_CA_PATH,
             &format!("{AEGIS_AUTHORIZED_PRINCIPALS_DIR}/%u"),
             None,
@@ -2425,7 +2424,7 @@ mod tests {
 
     #[test]
     fn install_dropin_contents_with_server_cert_includes_host_directives() {
-        let content = aegis_types::sshd_install_dropin_contents(
+        let content = aegis_dto::sshd_install_dropin_contents(
             AEGIS_CLIENT_CA_PATH,
             &format!("{AEGIS_AUTHORIZED_PRINCIPALS_DIR}/%u"),
             Some("/etc/ssh/ssh_host_ed25519_key"),

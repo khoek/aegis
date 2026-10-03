@@ -3,7 +3,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use aegis_types::{DEFAULT_AEGIS_NETWORK, HostId};
+use aegis_dto::{DEFAULT_AEGIS_NETWORK, HostId};
 use anyhow::{Context, Result, bail};
 
 use crate::api::AuthenticatedApiClient;
@@ -1162,8 +1162,8 @@ pub(super) fn remote_redeploy_command(
          if test \"$(id -u)\" -eq 0; then\n  aegis_program={}\nelse\n  aegis_program=\"$HOME/{}\"\nfi\n\
          exec \"$aegis_program\" advanced redeploy --version {target_version} --json\n",
         super::sh_quote(crate::managed::MANAGEMENT_SOCKET_PATH),
-        super::sh_quote(aegis_types::layout::SYSTEM_BINARY_PATH),
-        aegis_types::layout::USER_BINARY_RELATIVE_PATH,
+        super::sh_quote(aegis_dto::layout::SYSTEM_BINARY_PATH),
+        aegis_dto::layout::USER_BINARY_RELATIVE_PATH,
     )
 }
 

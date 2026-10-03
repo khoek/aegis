@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::thread;
 
-use aegis_types::{
+use aegis_dto::{
     DEFAULT_AEGIS_NETWORK, HostId,
     v1::{AegisDirectClientCertRequest, AegisDirectTarget},
 };
@@ -50,8 +50,8 @@ fn select_normal_target(api_base_override: Option<&str>, args: &SshArgs) -> Resu
     .collect::<Vec<_>>();
     let history = SshHistory::load()?;
     hosts.sort_by(|left, right| {
-        let left_hub = left.mode == aegis_types::AegisHostMode::Hub;
-        let right_hub = right.mode == aegis_types::AegisHostMode::Hub;
+        let left_hub = left.mode == aegis_dto::AegisHostMode::Hub;
+        let right_hub = right.mode == aegis_dto::AegisHostMode::Hub;
         left_hub
             .cmp(&right_hub)
             .then_with(|| {
@@ -68,8 +68,8 @@ fn select_normal_target(api_base_override: Option<&str>, args: &SshArgs) -> Resu
                 "{:<24}  {:<4}  {}",
                 host.alias(),
                 match host.mode {
-                    aegis_types::AegisHostMode::Hub => "hub",
-                    aegis_types::AegisHostMode::Leaf => "leaf",
+                    aegis_dto::AegisHostMode::Hub => "hub",
+                    aegis_dto::AegisHostMode::Leaf => "leaf",
                 },
                 host.host_label()
             ),
@@ -152,8 +152,8 @@ fn prepare_direct_endpoint(screen: &ui::Screen) -> Result<PreparedDirectSession>
                 "{:<24}  {:<4}  {}",
                 target.aliases.primary(),
                 match target.mode {
-                    aegis_types::AegisHostMode::Hub => "hub",
-                    aegis_types::AegisHostMode::Leaf => "leaf",
+                    aegis_dto::AegisHostMode::Hub => "hub",
+                    aegis_dto::AegisHostMode::Leaf => "leaf",
                 },
                 target.wireguard_ipv4
             ),

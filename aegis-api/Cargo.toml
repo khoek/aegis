@@ -12,7 +12,7 @@ description = "Independent Aegis fleet control plane HTTP service."
 [dependencies]
 arche-firestore = { workspace = true }
 phylax-oidc = { workspace = true }
-aegis-types = { workspace = true }
+aegis-dto = { workspace = true }
 arche-web = { workspace = true }
 phylax-core = { workspace = true }
 phylax-gcp = { workspace = true }

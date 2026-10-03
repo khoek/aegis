@@ -15,7 +15,7 @@ name = "aegis"
 path = "src/main.rs"
 
 [dependencies]
-aegis-types = { workspace = true }
+aegis-dto = { workspace = true }
 
 capulus = { workspace = true, features = ["managed-system"] }
 phylax-core = { workspace = true }

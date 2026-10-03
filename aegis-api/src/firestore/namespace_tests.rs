@@ -107,8 +107,8 @@ async fn exercise_namespaces() -> anyhow::Result<()> {
         .into("members")
         .document_id("user-1")
         .parent(&alice.parent)
-        .object(&aegis_types::NamespaceMembership {
-            role: aegis_types::NamespaceRole::Member,
+        .object(&aegis_dto::NamespaceMembership {
+            role: aegis_dto::NamespaceRole::Member,
         })
         .execute::<()>()
         .await?;

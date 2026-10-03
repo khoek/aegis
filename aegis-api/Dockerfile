@@ -4,10 +4,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libs
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Cargo.toml Cargo.lock LICENSE ./
-COPY aegis-types ./aegis-types
+COPY aegis-dto ./aegis-dto
 COPY aegis-api ./aegis-api
 COPY aegis-tool ./aegis-tool
-COPY aegis-admin ./aegis-admin
+COPY aegis-admin-tool ./aegis-admin-tool
 RUN cargo build --locked --release --package aegis-api && strip target/release/aegis-api
 
 FROM debian:bookworm-slim

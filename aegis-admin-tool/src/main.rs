@@ -9,7 +9,7 @@ mod store;
 
 use std::{future::Future, path::PathBuf, time::Duration};
 
-use aegis_types::{NamespaceId, NamespaceRole};
+use aegis_dto::{NamespaceId, NamespaceRole};
 use anyhow::{Context, Result, ensure};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use phylax_core::OAuthAuthorizationCodeGrantRequest;
@@ -269,7 +269,7 @@ fn authorize(
     role: NamespaceRole,
     remote: bool,
 ) -> Result<()> {
-    let endpoint = aegis_types::namespace::ApiEndpoint::parse(&connection.endpoint)
+    let endpoint = aegis_dto::namespace::ApiEndpoint::parse(&connection.endpoint)
         .map_err(anyhow::Error::msg)?
         .with_namespace(namespace.clone())
         .base_url();

@@ -1,1 +1,1 @@
-pub(crate) use aegis_types::configuration::*;
+pub(crate) use aegis_dto::configuration::*;

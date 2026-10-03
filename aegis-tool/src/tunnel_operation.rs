@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aegis_types::HostAlias;
+use aegis_dto::HostAlias;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
@@ -74,11 +74,11 @@ pub(crate) struct Snapshot {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Status {
-    pub source: aegis_types::HostId,
-    pub central: Option<aegis_types::v1::AegisEgressStatus>,
+    pub source: aegis_dto::HostId,
+    pub central: Option<aegis_dto::v1::AegisEgressStatus>,
     pub central_error: Option<String>,
     pub local: crate::agent::AgentTunnelStatus,
-    pub aliases: std::collections::BTreeMap<aegis_types::HostId, String>,
+    pub aliases: std::collections::BTreeMap<aegis_dto::HostId, String>,
     pub operation: Option<Snapshot>,
     pub recovery_pending: bool,
 }

@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::process::Command;
 
-use aegis_types::{
+use aegis_dto::{
     HostId, normalize_wireguard_ipv4, normalize_wireguard_ipv6, normalize_wireguard_key,
 };
 use anyhow::{Context, Result, bail};
@@ -105,7 +105,7 @@ impl<'a> ClientConfig<'a> {
         }
         if options
             .mtu
-            .is_some_and(|mtu| mtu < aegis_types::mtu::IPV6_MINIMUM)
+            .is_some_and(|mtu| mtu < aegis_dto::mtu::IPV6_MINIMUM)
         {
             bail!("WireGuard client MTU must support IPv6");
         }
@@ -250,7 +250,7 @@ WantedBy=multi-user.target
 
 #[cfg(test)]
 mod tests {
-    use aegis_types::HostId;
+    use aegis_dto::HostId;
 
     use super::{ClientConfig, ClientConfigOptions, ClientRouting, HubPeer};
 

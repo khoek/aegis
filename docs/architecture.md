@@ -1,7 +1,7 @@
 # Architecture
 
-`aegis-types` owns the wire format and validated configuration. `aegis-api` owns
-HTTP policy and fleet persistence. `aegis-tool` owns the client and host agent; `aegis-admin` owns local
+`aegis-dto` owns the wire format and validated configuration. `aegis-api` owns
+HTTP policy and fleet persistence. `aegis-tool` owns the client and host agent; `aegis-admin-tool` owns local
 administration. No crate depends on Deus or occultum.
 
 The client package has no database or GCP administration dependencies. The admin

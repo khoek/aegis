@@ -2,13 +2,13 @@
 
 Authenticated SSH, WireGuard networking, and fleet management.
 
-- [`aegis-types`](aegis-types): protocol and configuration types
+- [`aegis-dto`](aegis-dto): protocol and configuration types
 - [`aegis-api`](aegis-api): standalone Tokio/Axum control plane
 - [`aegis-tool`](aegis-tool): `aegis` client and host agent
-- [`aegis-admin`](aegis-admin): deployment and account administration
+- [`aegis-admin-tool`](aegis-admin-tool): deployment and account administration
 
 ```sh
-cargo install --locked aegis-tool aegis-admin
+cargo install --locked aegis-tool aegis-admin-tool
 aegis-admin setup
 ```
 
