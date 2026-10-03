@@ -39,11 +39,14 @@ jobs:
         run: |
           gcloud emulators firestore start --host-port="$FIRESTORE_EMULATOR_HOST" --quiet > /tmp/firestore.log 2>&1 &
           emulator_pid=$!
-          trap 'kill "$emulator_pid"; wait "$emulator_pid" || true' EXIT
-          for attempt in $(seq 1 30); do
-            if curl --silent --max-time 1 "http://$FIRESTORE_EMULATOR_HOST/" >/dev/null; then break; fi
+          trap 'status=$?; if [ "$status" -ne 0 ]; then cat /tmp/firestore.log; fi; kill "$emulator_pid" 2>/dev/null || true; wait "$emulator_pid" || true' EXIT
+          ready=false
+          for attempt in $(seq 1 60); do
+            kill -0 "$emulator_pid" || exit 1
+            if curl --silent --max-time 1 "http://$FIRESTORE_EMULATOR_HOST/" >/dev/null; then ready=true; break; fi
             sleep 1
           done
+          "$ready"
           cargo test -p aegis-admin-tool --locked emulator -- --ignored
           cargo test -p aegis-admin-tool --locked --test setup -- --include-ignored
           cargo test -p aegis-api --locked namespace_subtrees -- --ignored
