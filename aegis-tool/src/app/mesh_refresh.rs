@@ -35,6 +35,12 @@ impl<'a> RefreshFanout<'a> {
     }
 
     fn run(&self) -> Result<()> {
+        if !crate::api::uses_local_agent(self.api_base_override)?
+            || crate::config::load_user_auth_state()?.is_none()
+        {
+            ui::detail("Agents will discover topology changes on their next synchronization.");
+            return Ok(());
+        }
         let refreshed = local_agent::refresh_host_cache()?;
         let targets = host::filter_visible_hosts(refreshed.hosts, false)
             .into_iter()
@@ -135,6 +141,7 @@ pub(super) fn trigger_remote_reconcile(
         "--command",
         &format!("{SYSTEM_AEGIS_BIN} advanced reconcile"),
     ]);
+    capulus::configure_child_command(&mut command);
     let output = run_capture(&mut command)?;
     if output.status.success() {
         return Ok(());
