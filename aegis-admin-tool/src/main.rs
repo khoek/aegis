@@ -179,7 +179,12 @@ fn run(command: AdminCommand) -> Result<i32> {
         AdminCommand::User { project, command } => {
             let connection = Connection::load(project.project)?;
             let admin = connection.open()?;
-            let value = database("Updating account access", async {
+            let label = match &command {
+                UserCommand::List => "Listing accounts",
+                UserCommand::Members { .. } => "Listing namespace members",
+                _ => "Updating account access",
+            };
+            let value = database(label, async {
                 Ok(match command {
                     UserCommand::List => serde_json::to_value(admin.users().await?)?,
                     UserCommand::Members { namespace } => admin.members(namespace).await?,

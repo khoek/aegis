@@ -1,4 +1,4 @@
-use aegis_dto::{HostId, v1::AegisMeshConfig};
+use aegis_dto::{HostId, v1::AegisNetworkConfig};
 use anyhow::Result;
 use capulus::shell::shell_quote as sh_quote;
 
@@ -48,7 +48,7 @@ pub(super) struct RemoteFinalizeInstall<'a> {
     api_base: &'a str,
     pending_host: &'a crate::config::CachedHost,
     hub_peers: &'a [wireguard::HubPeer],
-    mesh: &'a AegisMeshConfig,
+    network: &'a AegisNetworkConfig,
     server_certificate: Option<&'a str>,
     agent_token: &'a str,
     login_principal: &'a str,
@@ -61,7 +61,7 @@ pub(super) struct RemoteFinalizeInstallParts<'a> {
     pub(super) api_base: &'a str,
     pub(super) pending_host: &'a crate::config::CachedHost,
     pub(super) hub_peers: &'a [wireguard::HubPeer],
-    pub(super) mesh: &'a AegisMeshConfig,
+    pub(super) network: &'a AegisNetworkConfig,
     pub(super) server_certificate: Option<&'a str>,
     pub(super) agent_token: &'a str,
     pub(super) login_principal: &'a str,
@@ -76,7 +76,7 @@ impl<'a> RemoteFinalizeInstall<'a> {
             api_base: parts.api_base,
             pending_host: parts.pending_host,
             hub_peers: parts.hub_peers,
-            mesh: parts.mesh,
+            network: parts.network,
             server_certificate: parts.server_certificate,
             agent_token: parts.agent_token,
             login_principal: parts.login_principal,
@@ -114,7 +114,7 @@ impl<'a> RemoteFinalizeInstall<'a> {
             mesh_bootstrap::BootstrapMeshScript::new(
                 self.pending_host,
                 self.hub_peers,
-                self.mesh,
+                self.network,
                 self.mode,
             )
             .render()?
@@ -160,6 +160,18 @@ pub fn system_program_bootstrap_script(use_sudo: bool) -> String {
         script = include_str!("../../assets/bootstrap.sh"),
     )
 }
+
+pub fn system_agent_activation_script() -> String {
+    format!(
+        "sudo systemctl enable --now {application_socket} {management_socket}\n\
+         sudo systemctl enable --now {service}\n\
+         sudo systemctl is-active --quiet {application_socket} {management_socket} {service}\n",
+        application_socket = sh_quote(crate::managed::APPLICATION_SOCKET_NAME),
+        management_socket = sh_quote(crate::managed::MANAGEMENT_SOCKET_NAME),
+        service = sh_quote(super::AEGIS_AGENT_SERVICE_NAME),
+    )
+}
+
 pub(super) struct LocalTargetInstall<'a> {
     api_base: &'a str,
     host_id: HostId,

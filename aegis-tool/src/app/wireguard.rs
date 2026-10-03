@@ -10,10 +10,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::command::{require_success, require_success_with_input};
 
-use super::{
-    WIREGUARD_CONFIG_PATH, WIREGUARD_DIR, WIREGUARD_INTERFACE, WIREGUARD_UNIT_PREFIX,
-    WIREGUARD_UNIT_TEMPLATE_PATH, line_with_newline, system,
-};
+use super::{WIREGUARD_CONFIG_PATH, line_with_newline};
 
 #[derive(Debug, Clone)]
 pub(super) struct Keypair {
@@ -145,33 +142,6 @@ impl<'a> ClientConfig<'a> {
         }
         content
     }
-
-    pub(super) fn configure_system(&self) -> Result<()> {
-        crate::apparmor::ensure_wireguard_access()?;
-        capulus::store::ensure_directory(Path::new(WIREGUARD_DIR), Some(0o755))?;
-        system::TextFile::new(Path::new(WIREGUARD_CONFIG_PATH))
-            .write_atomic(&self.contents(), 0o600)?;
-        system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH))
-            .write_atomic(&wireguard_systemd_unit_contents(), 0o644)?;
-        system::Systemd::daemon_reload()?;
-
-        let service = format!("{WIREGUARD_UNIT_PREFIX}{WIREGUARD_INTERFACE}");
-        let mut enable = Command::new("systemctl");
-        enable.args(["enable", &service]);
-        require_success("enable WireGuard service", &mut enable)?;
-
-        let mut restart = Command::new("systemctl");
-        restart.args(["restart", &service]);
-        require_success("restart WireGuard service", &mut restart)?;
-        Ok(())
-    }
-}
-
-pub(super) fn load_private_key(path: &Path) -> Result<String> {
-    normalize_wireguard_key(
-        &fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?,
-    )
-    .with_context(|| format!("wireguard private key at {} is invalid", path.display()))
 }
 
 pub(super) fn endpoint_literal(endpoint_ip: &str) -> String {
@@ -227,25 +197,6 @@ pub(super) fn parse_interface_addresses(config: &str) -> Result<(String, Option<
         }
     }
     bail!("config has no Address line with a WireGuard IPv4 address")
-}
-
-fn wireguard_systemd_unit_contents() -> String {
-    format!(
-        "[Unit]
-Description=aegis WireGuard interface %i
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash /usr/bin/wg-quick up {WIREGUARD_DIR}/%i.conf
-ExecStop=/bin/bash /usr/bin/wg-quick down {WIREGUARD_DIR}/%i.conf
-
-[Install]
-WantedBy=multi-user.target
-"
-    )
 }
 
 #[cfg(test)]

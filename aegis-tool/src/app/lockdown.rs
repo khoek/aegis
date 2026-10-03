@@ -299,6 +299,9 @@ fn apply_local_enable(host: &CachedHost) -> Result<()> {
 }
 
 pub(super) fn apply_local_disable() -> Result<()> {
+    if !system::LocalRoot::is_running() {
+        return system::LocalRoot::run_script(&remote_apply_disable_script());
+    }
     system::Sshd::remove_dropin(Path::new(AEGIS_LOCKDOWN_DROPIN))?;
     system::Sshd::reload()
 }

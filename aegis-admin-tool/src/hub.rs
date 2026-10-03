@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     time::{Duration, Instant},
 };
@@ -95,8 +96,7 @@ pub(super) fn ensure(deployment: &mut Deployment) -> Result<()> {
                     && rule["targetTags"] == serde_json::json!([HUB])
                     && rule["direction"] == "INGRESS"
                     && rule["disabled"] == false
-                    && rule["allowed"]
-                        == serde_json::json!([{"IPProtocol":protocol,"ports":ports}]),
+                    && allowed_ports_match(&rule["allowed"], protocol, &ports),
                 "existing firewall rule {name} differs from setup; inspect it explicitly"
             );
         } else {
@@ -226,7 +226,11 @@ pub(super) fn ensure(deployment: &mut Deployment) -> Result<()> {
             .get(&host)
             .is_some_and(|host| !host.pending)
     {
-        ui::stage("Hub is enrolled; requesting reconciliation through its installed agent");
+        ui::stage("Hub is enrolled; starting its installed agent and requesting reconciliation");
+        let script = format!(
+            "{}sudo /usr/local/bin/aegis advanced reconcile\n",
+            invitation::system_agent_activation_script(),
+        );
         cloud.stream(
             &[
                 "compute",
@@ -236,10 +240,10 @@ pub(super) fn ensure(deployment: &mut Deployment) -> Result<()> {
                 &zone,
                 "--tunnel-through-iap",
                 "--ssh-key-expire-after=1h",
-                "--command=sudo /usr/local/bin/aegis advanced reconcile",
+                "--command=bash -seuo pipefail",
                 "--ssh-flag=-oConnectTimeout=20",
             ],
-            &[],
+            script.as_bytes(),
             Duration::from_secs(180),
         )?;
         return wait(deployment, &mut api);
@@ -421,6 +425,28 @@ fn wait(deployment: &Deployment, api: &mut AuthenticatedApiClient) -> Result<()>
         ui::sleep(Duration::from_secs(5))?;
     }
 }
+fn allowed_ports_match(value: &Value, protocol: &str, expected: &[&str]) -> bool {
+    let Some(rules) = value.as_array() else {
+        return false;
+    };
+    let mut ports = BTreeSet::new();
+    for rule in rules {
+        if rule["IPProtocol"] != protocol {
+            return false;
+        }
+        let Some(values) = rule["ports"].as_array().filter(|ports| !ports.is_empty()) else {
+            return false;
+        };
+        for value in values {
+            let Some(port) = value.as_str() else {
+                return false;
+            };
+            ports.insert(port);
+        }
+    }
+    ports == expected.iter().copied().collect()
+}
+
 fn named<'a>(values: &'a Value, name: &str) -> Result<Option<&'a Value>> {
     let matches: Vec<_> = array(values)?
         .iter()
@@ -436,4 +462,29 @@ fn suffix(value: &Value, name: &str) -> bool {
     value
         .as_str()
         .is_some_and(|s| s.ends_with(&format!("/{name}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn firewall_comparison_accepts_grouped_and_separate_port_entries() {
+        for rules in [
+            json!([{"IPProtocol":"udp","ports":["51820","51822"]}]),
+            json!([{"IPProtocol":"udp","ports":["51822"]},{"IPProtocol":"udp","ports":["51820"]}]),
+        ] {
+            assert!(allowed_ports_match(&rules, "udp", &["51820", "51822"]));
+        }
+        for rules in [
+            json!([{"IPProtocol":"udp"}]),
+            json!([{"IPProtocol":"udp","ports":[]}]),
+            json!([{"IPProtocol":"tcp","ports":["51820","51822"]}]),
+            json!([{"IPProtocol":"udp","ports":["51820","51822","51821"]}]),
+            json!([{"IPProtocol":"udp","ports":["51820"]}]),
+        ] {
+            assert!(!allowed_ports_match(&rules, "udp", &["51820", "51822"]));
+        }
+    }
 }

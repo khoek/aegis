@@ -1006,8 +1006,8 @@ fn run_enroll_with_target(
             aliases: prepared.host.aliases.clone(),
             host: aegis_dto::v1::AegisNetworkHost::resolve(prepared.host.clone(), pending_member),
         };
-        let (wireguard_ipv4, wireguard_ipv6) = host::host_wireguard_identity(&pending_host)?;
-        let mesh = prepared.network.mesh.as_ref().ok_or_else(|| {
+        host::host_wireguard_identity(&pending_host)?;
+        prepared.network.mesh.as_ref().ok_or_else(|| {
             anyhow!("`{DEFAULT_AEGIS_NETWORK}` network does not publish a managed mesh")
         })?;
         let hub_peers = if enrollment.mode == AegisHostMode::Hub {
@@ -1032,16 +1032,15 @@ fn run_enroll_with_target(
             && !hub_peers.is_empty()
         {
             workflow.set_phase("configuring local WireGuard peers");
-            wireguard::ClientConfig::new(wireguard::ClientConfigOptions {
-                private_key: &wireguard::load_private_key(Path::new(WIREGUARD_PRIVATE_KEY_PATH))?,
-                wireguard_ipv4: &wireguard_ipv4,
-                wireguard_ipv6: &wireguard_ipv6,
-                hub_peers: &hub_peers,
-                endpoint_port: mesh.endpoint_port,
-                mtu: None,
-                routing: wireguard::ClientRouting::PeerAddresses,
-            })?
-            .configure_system()?;
+            system::LocalRoot::run_script(
+                &mesh_bootstrap::BootstrapMeshScript::new(
+                    &pending_host,
+                    &hub_peers,
+                    &prepared.network,
+                    agent_mode_from_host_mode(enrollment.mode),
+                )
+                .render()?,
+            )?;
         }
 
         api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::InstallingAgent)?;
@@ -1064,7 +1063,7 @@ fn run_enroll_with_target(
                         api_base: &api_base,
                         pending_host: &pending_host,
                         hub_peers: &hub_peers,
-                        mesh,
+                        network: &prepared.network,
                         server_certificate,
                         agent_token: &target_agent_token,
                         login_principal: &remote.login_principal,
@@ -1258,36 +1257,19 @@ fn restart_enrollment_agent(
     match target {
         EnrollTarget::Local(_) => {
             workflow.set_phase("starting the local aegis-agent after activation");
-            for unit in [
-                crate::managed::APPLICATION_SOCKET_NAME,
-                crate::managed::MANAGEMENT_SOCKET_NAME,
-                AEGIS_AGENT_SERVICE_NAME,
-            ] {
-                system::SystemdUnit::new(unit).enable_now()?;
-            }
-            Ok(())
+            system::LocalRoot::run_script(&enroll_install::system_agent_activation_script())
         }
         EnrollTarget::Remote(_) if remote_session.is_some() => {
             workflow.set_phase("starting and verifying the remote aegis-agent after activation");
             ui::suspend(|| {
                 require_remote_session(remote_session)?.run_shell_streaming_with_tty(
-                    &remote::SudoScript::new(&enrollment_agent_activation_script()).render(),
+                    &remote::SudoScript::new(&enroll_install::system_agent_activation_script())
+                        .render(),
                 )
             })
         }
         EnrollTarget::Remote(_) => Ok(()),
     }
-}
-
-fn enrollment_agent_activation_script() -> String {
-    format!(
-        "sudo systemctl enable --now {application_socket} {management_socket}\n\
-         sudo systemctl enable --now {service}\n\
-         sudo systemctl is-active --quiet {application_socket} {management_socket} {service}\n",
-        application_socket = sh_quote(crate::managed::APPLICATION_SOCKET_NAME),
-        management_socket = sh_quote(crate::managed::MANAGEMENT_SOCKET_NAME),
-        service = sh_quote(AEGIS_AGENT_SERVICE_NAME),
-    )
 }
 
 fn finish_activated_enrollment(
@@ -1523,9 +1505,8 @@ mod tests {
     use super::{
         AEGIS_AUTHORIZED_PRINCIPALS_DIR, AEGIS_CLIENT_CA_PATH,
         FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT, REMOTE_SUDO_PASSWORD_HELPER_PATH, SystemLockPolicy,
-        agent_version, command_system_lock_policy, compact_line,
-        enrollment_agent_activation_script, fleet, host, host_list, known_hosts_target, lockdown,
-        managed_wireguard_interfaces_in, sh_quote, transfer,
+        agent_version, command_system_lock_policy, compact_line, fleet, host, host_list,
+        known_hosts_target, lockdown, managed_wireguard_interfaces_in, sh_quote, transfer,
     };
     use crate::cli::{
         AgentMode, Commands, EnrollArgs, InstallArgs, ListArgs, SshArgs, TransferArgs, TunnelArgs,
@@ -1536,8 +1517,9 @@ mod tests {
         AegisHostMode, HostAlias, HostAliases, HostId,
         v1::{
             AegisAgentHealth, AegisAgentStatus, AegisHostMessage, AegisHostMessageLevel,
-            AegisMeshConfig, AegisNetworkHostSsh, AegisNetworkMemberInternalAddresses,
-            AegisNetworkMemberWireGuard,
+            AegisMeshConfig, AegisNetworkConfig, AegisNetworkHostSsh,
+            AegisNetworkMemberInternalAddresses, AegisNetworkMemberWireGuard,
+            AegisNetworkWireGuardConfig,
         },
     };
     use ssh_key::{Algorithm, LineEnding, PrivateKey, rand_core::OsRng};
@@ -1628,6 +1610,23 @@ mod tests {
             subnet_ipv6: "fd75::/64".to_string(),
             wireguard_subnet_ipv4: "10.75.1.0/24".to_string(),
             wireguard_subnet_ipv6: "fd75::1:0/120".to_string(),
+            host_dns_suffix: None,
+        }
+    }
+
+    fn sample_network() -> AegisNetworkConfig {
+        AegisNetworkConfig {
+            name: "aegis".into(),
+            wireguard: AegisNetworkWireGuardConfig {
+                interface: "wg-aegis".into(),
+                endpoint_port: 51820,
+                mtu: 1400,
+                fwmark: 44641,
+                subnet_ipv4: "10.75.1.0/24".into(),
+                subnet_ipv6: "fd75::1:0/120".into(),
+            },
+            mesh: Some(sample_mesh()),
+            managed_ssh: true,
             host_dns_suffix: None,
         }
     }
@@ -2055,7 +2054,7 @@ mod tests {
 
     #[test]
     fn staged_enrollment_enables_both_sockets_before_the_agent_service() {
-        let script = enrollment_agent_activation_script();
+        let script = super::enroll_install::system_agent_activation_script();
         let sockets = script
             .find("enable --now aegis-agent.socket aegis-capulus.socket")
             .expect("socket activation should be present");
@@ -2080,7 +2079,7 @@ mod tests {
                 wireguard_ipv4: "10.75.1.1".to_string(),
                 wireguard_ipv6: "fd75::1:1".to_string(),
             }],
-            &sample_mesh(),
+            &sample_network(),
             AgentMode::Leaf,
         )
         .render()
@@ -2091,6 +2090,7 @@ mod tests {
         assert!(script.contains("/etc/apparmor.d/local/aegis-wg-quick"));
         assert!(script.contains("apparmor_parser"));
         assert!(script.contains("Address = 10.75.1.42/32,fd75::1:2a/128"));
+        assert!(script.contains("MTU = 1400"));
         assert!(script.contains("Endpoint = 34.123.45.67:51820"));
         assert!(script.contains("AllowedIPs = 10.75.1.1/32,fd75::1:1/128"));
         assert!(!script.contains("fe80"));
@@ -2257,7 +2257,7 @@ mod tests {
                 api_base: "https://api.example.test/v2",
                 pending_host: &pending_host,
                 hub_peers: &[],
-                mesh: &sample_mesh(),
+                network: &sample_network(),
                 server_certificate: None,
                 agent_token: "agent-token",
                 login_principal: "ubuntu",

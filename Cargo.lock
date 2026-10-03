@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-admin-tool"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aegis-dto",
  "aegis-tool",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-api"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-dto"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-tool"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aegis-dto",
  "anyhow",

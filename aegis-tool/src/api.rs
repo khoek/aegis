@@ -150,6 +150,7 @@ pub struct BrowserLoginStart {
 pub struct ApiClient {
     base_url: String,
     http: Client,
+    request_timeout: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -256,7 +257,16 @@ impl ApiClient {
             builder = builder.dns_resolver(std::sync::Arc::new(AgentControlDnsResolver::new()));
         }
         let http = builder.build()?;
-        Ok(Self { base_url, http })
+        Ok(Self {
+            base_url,
+            http,
+            request_timeout: options.request_timeout,
+        })
+    }
+
+    fn operation_request_timeout(&self) -> ApiResult<Duration> {
+        crate::tunnel_operation::request_timeout(self.request_timeout)
+            .map_err(ApiClientError::Transport)
     }
 
     pub fn get_namespace_context(
@@ -725,10 +735,7 @@ impl ApiClient {
                     .map_err(ApiClientError::Transport)?,
             )
             .bearer_auth(token)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| {
                 transport_error(
@@ -753,10 +760,7 @@ impl ApiClient {
             )
             .bearer_auth(token)
             .json(request)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| {
                 transport_error(
@@ -775,10 +779,7 @@ impl ApiClient {
                     .map_err(ApiClientError::Transport)?,
             )
             .bearer_auth(token)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| {
                 transport_error(
@@ -803,10 +804,7 @@ impl ApiClient {
             )
             .bearer_auth(token)
             .json(request)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| {
                 transport_error(
@@ -825,10 +823,7 @@ impl ApiClient {
                     .map_err(ApiClientError::Transport)?,
             )
             .bearer_auth(token)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| transport_error(error, "failed to fetch egress inventory"))?;
         parse_json_response(response)
@@ -848,10 +843,7 @@ impl ApiClient {
             )
             .bearer_auth(token)
             .json(result)
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| {
                 transport_error(
@@ -1162,10 +1154,7 @@ impl ApiClient {
                 grant_type: oauth::GRANT_TYPE_REFRESH_TOKEN.to_string(),
                 refresh_token: refresh_token.to_string(),
             })
-            .timeout(
-                crate::tunnel_operation::request_timeout(Duration::from_secs(5))
-                    .map_err(ApiClientError::Transport)?,
-            )
+            .timeout(self.operation_request_timeout()?)
             .send()
             .map_err(|error| transport_error(error, "failed to exchange agent refresh token"))?;
         let response: AgentTokenResponse = parse_json_response(response)?;
@@ -1836,6 +1825,7 @@ mod tests {
         net::{TcpListener, TcpStream},
         sync::{Arc, Mutex},
         thread,
+        time::Duration,
     };
     use url::Url;
 
@@ -2110,6 +2100,33 @@ mod tests {
         )
         .expect("response should write");
         stream.flush().expect("response should flush");
+    }
+
+    #[test]
+    fn machine_token_exchange_allows_cloud_startup_latency() {
+        let id: HostId = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        let (base, _, server) = spawn_mock_server(1, move |_, request| {
+            assert_eq!(request.method, "POST");
+            assert!(request.path.ends_with(path::AEGIS_AGENT_TOKEN));
+            thread::sleep(Duration::from_secs(6));
+            MockResponse::json(serde_json::json!({
+                "access_token": "access",
+                "refresh_token": "rotated",
+                "token_type": "Bearer",
+                "host_id": id,
+                "credential_kind": "enrollment",
+                "expires_in": 300,
+                "refresh_expires_in": 3600,
+            }))
+        });
+        let access = ApiClient::new(base)
+            .unwrap()
+            .exchange_agent_refresh_token("initial", 1000)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(access.host_id, id);
+        assert_eq!(access.access_expires_at_unix, 1300);
+        assert_eq!(access.refresh_token, "rotated");
     }
 
     #[test]

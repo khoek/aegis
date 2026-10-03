@@ -1,5 +1,5 @@
-use aegis_dto::{AegisHostMode, HostId, v1::AegisMeshConfig};
-use anyhow::{Result, bail};
+use aegis_dto::{AegisHostMode, HostId, v1::AegisNetworkConfig};
+use anyhow::{Context, Result, bail, ensure};
 use capulus::shell::shell_quote as sh_quote;
 
 use crate::agent::{
@@ -86,7 +86,7 @@ impl HubPeerSelection {
 pub(super) struct BootstrapMeshScript<'a> {
     local: &'a CachedHost,
     hub_peers: &'a [wireguard::HubPeer],
-    mesh: &'a AegisMeshConfig,
+    network: &'a AegisNetworkConfig,
     mode: AgentMode,
 }
 
@@ -94,26 +94,36 @@ impl<'a> BootstrapMeshScript<'a> {
     pub(super) fn new(
         local: &'a CachedHost,
         hub_peers: &'a [wireguard::HubPeer],
-        mesh: &'a AegisMeshConfig,
+        network: &'a AegisNetworkConfig,
         mode: AgentMode,
     ) -> Self {
         Self {
             local,
             hub_peers,
-            mesh,
+            network,
             mode,
         }
     }
 
     pub(super) fn render(&self) -> Result<String> {
+        let mesh = self
+            .network
+            .mesh
+            .as_ref()
+            .context("network has no managed mesh")?;
+        ensure!(
+            u32::from(self.network.wireguard.mtu)
+                >= u32::from(mesh.overlay_mtu) + u32::from(aegis_dto::mtu::VXLAN_OVER_IPV4),
+            "WireGuard MTU must leave 50 bytes for the IPv4 VXLAN overlay"
+        );
         let (wireguard_ipv4, wireguard_ipv6) = host::host_wireguard_identity(self.local)?;
         let config = wireguard::ClientConfig::new(wireguard::ClientConfigOptions {
             private_key: "$PRIVATE_KEY",
             wireguard_ipv4: &wireguard_ipv4,
             wireguard_ipv6: &wireguard_ipv6,
             hub_peers: self.hub_peers,
-            endpoint_port: self.mesh.endpoint_port,
-            mtu: None,
+            endpoint_port: self.network.wireguard.endpoint_port,
+            mtu: Some(self.network.wireguard.mtu),
             routing: wireguard::ClientRouting::PeerAddresses,
         })?
         .contents();
@@ -140,7 +150,7 @@ impl<'a> BootstrapMeshScript<'a> {
             })
             .collect::<String>();
         let loopback_setup = LoopbackInternalAddresses::new(self.local).render();
-        let bird_config = bird_config_contents(self.mesh, self.mode, self.local)?;
+        let bird_config = bird_config_contents(mesh, self.mode, self.local)?;
         Ok(format!(
             r#"set -euo pipefail
 source /etc/os-release
@@ -235,7 +245,7 @@ sudo systemctl restart {bird_service}
             expected_overlays = expected_overlays,
             interface = WIREGUARD_INTERFACE,
             loopback_setup = loopback_setup,
-            overlay_mtu = self.mesh.overlay_mtu,
+            overlay_mtu = mesh.overlay_mtu,
             overlay_prefix = BABEL_OVERLAY_PREFIX,
             overlay_setup = overlay_setup,
             private_key_path = WIREGUARD_PRIVATE_KEY_PATH,
