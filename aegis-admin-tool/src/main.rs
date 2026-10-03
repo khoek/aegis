@@ -147,6 +147,7 @@ enum UserCommand {
 }
 
 fn run(command: AdminCommand) -> Result<i32> {
+    initialize_tls()?;
     match command {
         AdminCommand::Connect {
             project,
@@ -233,6 +234,12 @@ fn run(command: AdminCommand) -> Result<i32> {
         }
     }
     Ok(0)
+}
+
+fn initialize_tls() -> Result<()> {
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("TLS provider is already initialized"))
 }
 
 /// Bound Firestore work and preserve the shared invocation's typed interruption.
@@ -324,4 +331,15 @@ fn authorize(
     ))?;
     client::UserContext { api_base: endpoint }.persist()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    #[test]
+    fn firestore_tls_can_build_with_both_dependency_crypto_providers_enabled() {
+        super::initialize_tls().unwrap();
+        let _ = rustls::ClientConfig::builder()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+    }
 }

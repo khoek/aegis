@@ -58,17 +58,20 @@ impl Gcloud {
     }
 
     pub fn token(&self) -> Result<String> {
-        let value = self.run(
+        let value: Value = serde_json::from_str(&self.run(
             &["auth", "print-access-token"],
             None,
             Duration::from_secs(30),
-        )?;
-        let token = value.trim().trim_matches('"').to_owned();
+        )?)
+        .context("gcloud returned invalid access-token JSON")?;
+        let token = value["token"]
+            .as_str()
+            .context("gcloud returned no access token; run gcloud auth login")?;
         ensure!(
-            !token.is_empty(),
-            "gcloud returned no credentials; run gcloud auth login"
+            !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_graphic()),
+            "gcloud returned an invalid access token; run gcloud auth login"
         );
-        Ok(token)
+        Ok(token.into())
     }
 
     pub fn user_account(&self) -> Result<String> {
