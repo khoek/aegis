@@ -1206,9 +1206,10 @@ impl AuthenticatedApiClient {
     pub fn load(api_base_override: Option<&str>) -> Result<Self> {
         let _auth_lock = crate::locks::user_auth_lock()?;
         let installed_agent_api_base = installed_agent_api_base()?;
-        let api_base = crate::config::namespace_endpoint(
-            &resolve_api_base(api_base_override, installed_agent_api_base.as_deref()).unwrap(),
-        )?
+        let api_base = crate::config::namespace_endpoint(&resolve_api_base(
+            api_base_override,
+            installed_agent_api_base.as_deref(),
+        )?)?
         .base_url();
         let mut auth_state = load_user_auth_state()?.ok_or_else(|| {
             anyhow!(
@@ -1601,9 +1602,10 @@ pub(crate) fn uses_local_agent(api_base_override: Option<&str>) -> Result<bool> 
     let Some(installed) = installed_agent_api_base()? else {
         return Ok(false);
     };
-    let selected = aegis_dto::namespace::ApiEndpoint::parse(
-        &resolve_api_base(api_base_override, Some(&installed)).unwrap(),
-    )
+    let selected = aegis_dto::namespace::ApiEndpoint::parse(&resolve_api_base(
+        api_base_override,
+        Some(&installed),
+    )?)
     .map_err(anyhow::Error::msg)?;
     selected.require_namespace().map_err(anyhow::Error::msg)?;
     let installed =

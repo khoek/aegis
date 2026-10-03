@@ -22,3 +22,29 @@ fn ordinary_cli_has_no_deployment_commands() {
         assert!(result.stderr.contains("unrecognized subcommand"));
     }
 }
+
+#[test]
+fn invalid_endpoint_is_a_command_error_instead_of_a_panic() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = capulus::process::CaptureOptions::default()
+        .validate()
+        .unwrap()
+        .run(
+            Command::new(env!("CARGO_BIN_EXE_aegis"))
+                .env("HOME", directory.path())
+                .args([
+                    "--progress",
+                    "plain",
+                    "--color",
+                    "never",
+                    "--api-base",
+                    "invalid",
+                    "list",
+                ]),
+            None,
+        )
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", output.stderr);
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.contains("panicked"));
+}

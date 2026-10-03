@@ -30,6 +30,10 @@ jobs:
           forbidden = {"arche-firestore", "firestore", "gcloud-sdk", "phylax-gcp", "phylax-oidc", "rcgen", "x509-parser"}
           assert not packages & forbidden, f"Administration dependencies in client: {packages & forbidden}"
           PY
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "27"
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: cloud-firestore-emulator
