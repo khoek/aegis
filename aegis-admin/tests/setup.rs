@@ -5,17 +5,17 @@ use std::{fs, os::unix::fs::PermissionsExt, process::Command, time::Duration};
 fn administration_help_and_validation_do_not_require_a_saved_endpoint() {
     let dir = tempfile::tempdir().unwrap();
     for args in [
-        vec!["admin", "--help"],
-        vec!["admin", "setup", "--help"],
-        vec!["admin", "authorize", "--help"],
-        vec!["admin", "configure", "--help"],
-        vec!["admin", "namespace-template"],
+        vec!["--help"],
+        vec!["setup", "--help"],
+        vec!["authorize", "--help"],
+        vec!["configure", "--help"],
+        vec!["namespace-template"],
     ] {
         let result = capulus::process::CaptureOptions::default()
             .validate()
             .unwrap()
             .run(
-                Command::new(env!("CARGO_BIN_EXE_aegis"))
+                Command::new(env!("CARGO_BIN_EXE_aegis-admin"))
                     .args(args)
                     .env("HOME", dir.path()),
                 None,
@@ -54,7 +54,7 @@ fn externally_hosted_configuration_and_discovery_do_not_provision_cloud_resource
     );
     let state = dir.path().join("cloud.json");
     for discover in [false, false, true] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_aegis"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_aegis-admin"));
         command
             .env("HOME", dir.path())
             .env_remove("SUDO_USER")
@@ -67,7 +67,7 @@ fn externally_hosted_configuration_and_discovery_do_not_provision_cloud_resource
                     std::env::var("PATH").unwrap()
                 ),
             )
-            .args(["--progress", "plain", "admin"]);
+            .args(["--progress", "plain"]);
         if discover {
             command.args(["connect", "personal"]);
         } else {
@@ -131,7 +131,7 @@ fn setup_resumes_after_deploy_failure_without_replacing_keys_or_secrets() {
     let image = format!("ghcr.io/khoek/aegis-api@sha256:{}", "a".repeat(64));
     let state = dir.path().join("cloud.json");
     for attempt in 0..3 {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_aegis"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_aegis-admin"));
         command
             .env("HOME", dir.path())
             .env_remove("SUDO_USER")
@@ -149,7 +149,6 @@ fn setup_resumes_after_deploy_failure_without_replacing_keys_or_secrets() {
                 "plain",
                 "--color",
                 "never",
-                "admin",
                 "setup",
                 "--project",
                 &project,

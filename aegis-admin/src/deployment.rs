@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{database, gcloud::Gcloud, store};
-use crate::{config, ui};
+use aegis_tool::{client, ui};
 
 const SERVICE: &str = "aegis-api";
 const DATABASE: &str = "aegis";
@@ -155,7 +155,7 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
         initial_namespace: namespace,
     } = args;
     let project = project(project_arg)?;
-    let _lock = crate::locks::deployment_lock(&project)?;
+    let _lock = aegis_tool::client::deployment_lock(&project)?;
     let oauth = read_oauth_client(Some(&oauth_client), &endpoint)?;
     let setup = store::SetupOptions {
         issuer_url: endpoint.clone(),
@@ -190,7 +190,7 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
     }
     .persist()?;
     ui::success(
-        "API configuration and administration connection saved. Supply the OAuth web client's secret as AEGIS_OIDC_CLIENT_SECRET to your API runtime, then run `aegis admin authorize --role admin` after starting it.",
+        "API configuration and administration connection saved. Supply the OAuth web client's secret as AEGIS_OIDC_CLIENT_SECRET to your API runtime, then run `aegis-admin authorize --role admin` after starting it.",
     );
     Ok(())
 }
@@ -209,7 +209,7 @@ impl GoogleWebClient {
 
 pub(super) fn setup(args: SetupArgs) -> Result<()> {
     let project = project(args.project.clone())?;
-    let _lock = crate::locks::deployment_lock(&project)?;
+    let _lock = aegis_tool::client::deployment_lock(&project)?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
     let mut deployment = if path.exists() {
@@ -236,7 +236,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         if let Some(image) = &args.image {
             ensure!(
                 image == &deployment.image,
-                "use `aegis admin deploy --image` to change the API release"
+                "use `aegis-admin deploy --image` to change the API release"
             );
         }
         deployment
@@ -325,13 +325,13 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         ensure!(accepted, "Setup declined; no resources were changed");
     }
     if !args.no_enroll {
-        crate::app::check_local_enrollment_platform()?;
+        aegis_tool::client::enrollment::check_local_enrollment_platform()?;
     }
     deployment.persist()?;
     let result = deployment.setup_steps(client_secret.as_deref(), args.no_enroll, args.remote_auth);
     if let Err(error) = result {
         ui::warn(&format!(
-            "Setup stopped. Completed phases: {}. Resources and keys are retained. Resume with `aegis admin setup --project {}`. Receipt: {}",
+            "Setup stopped. Completed phases: {}. Resources and keys are retained. Resume with `aegis-admin setup --project {}`. Receipt: {}",
             deployment.completed.join(", "),
             deployment.config.project,
             path.display()
@@ -351,7 +351,7 @@ impl Deployment {
         let mut deployment: Self =
             serde_json::from_slice(&fs::read(&path).with_context(|| {
                 format!(
-                    "No saved deployment at {}; run aegis admin setup",
+                    "No saved deployment at {}; run aegis-admin setup",
                     path.display()
                 )
             })?)?;
@@ -449,12 +449,13 @@ impl Deployment {
     }
 
     fn enroll_current_machine(&mut self) -> Result<()> {
-        let _lock = crate::locks::local_system_lock()?;
+        let _lock = aegis_tool::client::local_system_lock()?;
         let endpoint = self.namespace_endpoint()?;
-        if crate::app::setup_machine_ready(&endpoint, self.local_host.as_ref())? {
+        if aegis_tool::client::enrollment::local_machine_ready(&endpoint, self.local_host.as_ref())?
+        {
             return Ok(());
         }
-        let mut api = crate::api::AuthenticatedApiClient::load(Some(&endpoint))?;
+        let mut api = aegis_tool::client::AuthenticatedApiClient::load(Some(&endpoint))?;
         let host = match self.local_host {
             Some(host) => host,
             None => {
@@ -462,23 +463,26 @@ impl Deployment {
                 let alias = aegis_types::HostAlias::parse(
                     name.trim().split('.').next().unwrap_or_default(),
                 )?;
-                let enrollment =
-                    crate::invitation::reserve(&mut api, alias, aegis_types::AegisHostMode::Leaf)?;
+                let enrollment = aegis_tool::client::enrollment::reserve(
+                    &mut api,
+                    alias,
+                    aegis_types::AegisHostMode::Leaf,
+                )?;
                 self.local_host = Some(enrollment.host_id);
                 self.persist().context("machine reservation committed; save its host ID in the setup receipt before retrying")?;
                 enrollment.host_id
             }
         };
-        let path = crate::invitation::path(&host)?;
+        let path = aegis_tool::client::enrollment::path(&host)?;
         if !path.exists() {
-            crate::invitation::issue(&mut api, &host)?;
+            aegis_tool::client::enrollment::issue(&mut api, &host)?;
         }
-        let invitation = crate::invitation::read(&path)?;
+        let invitation = aegis_tool::client::enrollment::read(&path)?;
         ensure!(
             invitation.enrollment.host_id == host && invitation.api_base == endpoint,
             "saved setup invitation does not match the deployment receipt"
         );
-        crate::app::enroll_setup_machine(&endpoint, path)
+        aegis_tool::client::enrollment::enroll_local_machine(&endpoint, path)
     }
     fn provision(&mut self, secret: Option<&str>) -> Result<()> {
         let cloud = self.cloud()?;
@@ -786,7 +790,8 @@ impl Deployment {
             "stored issuer differs from deployment receipt"
         );
         self.check_endpoint()?;
-        let mut api = crate::api::AuthenticatedApiClient::load(Some(&self.namespace_endpoint()?))?;
+        let mut api =
+            aegis_tool::client::AuthenticatedApiClient::load(Some(&self.namespace_endpoint()?))?;
         let membership = api.namespace_context()?;
         let service = self.cloud()?.json(&[
             "run",
@@ -832,7 +837,7 @@ fn project(value: Option<String>) -> Result<String> {
 }
 fn receipt_path(project: &str) -> Result<PathBuf> {
     Gcloud::new(project.into())?;
-    Ok(config::app_dir()?
+    Ok(client::app_dir()?
         .join("deployments")
         .join(format!("{project}.json")))
 }

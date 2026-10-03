@@ -7,6 +7,7 @@ COPY Cargo.toml Cargo.lock LICENSE ./
 COPY aegis-types ./aegis-types
 COPY aegis-api ./aegis-api
 COPY aegis-tool ./aegis-tool
+COPY aegis-admin ./aegis-admin
 RUN cargo build --locked --release --package aegis-api && strip target/release/aegis-api
 
 FROM debian:bookworm-slim

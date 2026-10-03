@@ -2,8 +2,8 @@
 
 Publish the shared dependencies first: Capulus 0.6.9 and the five Rete crates.
 Rete's order is `phylax-core`, `phylax-oidc`, `arche-firestore`, `phylax-gcp`,
-then `arche-web`. The Aegis workspace deliberately has no sibling path dependencies
-except its own `aegis-types`; local development patches stay in ignored `.cargo/`.
+then `arche-web`. The Aegis workspace deliberately uses path dependencies only
+within its own workspace; local development patches stay in ignored `.cargo/`.
 
 After those releases are available:
 
@@ -15,9 +15,13 @@ cargo test --workspace --locked
 
 The lockfile preparation runs in a clean temporary checkout with an isolated Cargo
 home. Review and commit its result, then tag the shared workspace version.
-Publish `aegis-types`, `aegis-api`, and `aegis-tool`, in that order, using
+Publish `aegis-types`, `aegis-api`, `aegis-tool`, then `aegis-admin`, using
 `cargo publish --locked -p PACKAGE`. Wait for each dependency to appear in the
 crates.io index before publishing its consumers.
+
+Install `aegis-tool` and `aegis-admin` independently to verify their package
+boundaries. The client must build without Firestore, GCP identity, or
+certificate-authority generation dependencies. Neither package needs feature flags.
 
 Build `aegis-api/Dockerfile` from this repository root. Publish the image as
 `ghcr.io/khoek/aegis-api:vVERSION` and make the GHCR package publicly readable.
@@ -31,8 +35,8 @@ must pass through `prepare-lockfile.py` before release.
 Tests requiring Firestore use a loopback emulator, never a production project:
 
 ```sh
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-tool emulator -- --ignored
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-tool --test setup -- --include-ignored
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-admin emulator -- --ignored
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-admin --test setup -- --include-ignored
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-api namespace_subtrees -- --ignored
 ```
 

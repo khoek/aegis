@@ -32,7 +32,7 @@ impl Gcloud {
 
     pub fn run(&self, args: &[&str], input: Option<&[u8]>, timeout: Duration) -> Result<String> {
         let phase = args.iter().take(3).copied().collect::<Vec<_>>().join(" ");
-        let task = crate::ui::task(crate::ui::TaskOptions {
+        let task = aegis_tool::ui::task(aegis_tool::ui::TaskOptions {
             label: format!("GCP: {phase}"),
             deadline: Some(timeout),
             ..Default::default()
@@ -43,7 +43,7 @@ impl Gcloud {
             .args(["--project", &self.project, "--quiet", "--format=json"]);
         let output = capulus::process::CaptureOptions {
             timeout,
-            cancellation: crate::ui::current().cancellation(),
+            cancellation: aegis_tool::ui::current().cancellation(),
             ..Default::default()
         }
         .validate()?
@@ -76,10 +76,10 @@ impl Gcloud {
         command
             .args(args)
             .args(["--project", &self.project, "--quiet"]);
-        let output = crate::ui::suspend(|| {
+        let output = aegis_tool::ui::suspend(|| {
             capulus::process::CaptureOptions {
                 timeout,
-                cancellation: crate::ui::current().cancellation(),
+                cancellation: aegis_tool::ui::current().cancellation(),
                 ..Default::default()
             }
             .validate()?
@@ -96,7 +96,7 @@ impl Gcloud {
     pub fn active_project() -> Result<Option<String>> {
         let output = capulus::process::CaptureOptions {
             timeout: Duration::from_secs(30),
-            cancellation: crate::ui::current().cancellation(),
+            cancellation: aegis_tool::ui::current().cancellation(),
             ..Default::default()
         }
         .validate()?

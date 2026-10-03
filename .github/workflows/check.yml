@@ -16,6 +16,20 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: cargo clippy -p aegis-tool --all-targets --locked -- -D warnings
+      - run: cargo test -p aegis-tool --locked
+      - name: Check client dependency boundary
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          tree = subprocess.check_output([
+              "cargo", "tree", "-p", "aegis-tool",
+              "--edges", "normal", "--prefix", "none", "--locked",
+          ], text=True, timeout=60)
+          packages = {line.split()[0] for line in tree.splitlines()}
+          forbidden = {"arche-firestore", "firestore", "gcloud-sdk", "phylax-gcp", "phylax-oidc", "rcgen", "x509-parser"}
+          assert not packages & forbidden, f"Administration dependencies in client: {packages & forbidden}"
+          PY
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: cloud-firestore-emulator
@@ -30,7 +44,7 @@ jobs:
             if curl --silent --max-time 1 "http://$FIRESTORE_EMULATOR_HOST/" >/dev/null; then break; fi
             sleep 1
           done
-          cargo test -p aegis-tool --locked emulator -- --ignored
-          cargo test -p aegis-tool --locked --test setup -- --include-ignored
+          cargo test -p aegis-admin --locked emulator -- --ignored
+          cargo test -p aegis-admin --locked --test setup -- --include-ignored
           cargo test -p aegis-api --locked namespace_subtrees -- --ignored
       - run: docker build --file aegis-api/Dockerfile --tag aegis-api:check .

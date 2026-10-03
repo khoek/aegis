@@ -9,7 +9,10 @@ use capulus::shell::shell_quote;
 use serde_json::Value;
 
 use super::deployment::{Deployment, array, text};
-use crate::{api::AuthenticatedApiClient, config, invitation, ui};
+use aegis_tool::{
+    client::{self, AuthenticatedApiClient, enrollment as invitation},
+    ui,
+};
 
 const HUB: &str = "aegis-hub";
 const NETWORK: &str = "aegis-hub";
@@ -361,7 +364,7 @@ trap 'rm -f -- "$invitation"' EXIT
 printf '%s' {credential} > "$invitation"
 /usr/local/bin/aegis --progress plain manage enroll --local --invitation "$invitation"
 "#,
-        bootstrap = crate::app::enroll_install::system_program_bootstrap_script(true),
+        bootstrap = aegis_tool::client::enrollment::system_program_bootstrap_script(true),
         credential = shell_quote(&serde_json::to_string(invitation)?)
     ))
 }
@@ -382,7 +385,7 @@ pub(super) fn check(deployment: &Deployment, api: &mut AuthenticatedApiClient) -
     ensure!(
         agent.health.reconciled_since_boot
             && agent.health.last_reconcile_error.is_none()
-            && agent.reported_unix > config::now_unix() - 180,
+            && agent.reported_unix > client::now_unix() - 180,
         "Hub has no recent healthy reconciliation"
     );
     let members = api.get_network_members("aegis")?;

@@ -18,7 +18,7 @@ pub(crate) async fn load_login(db: &Db) -> anyhow::Result<LoginConfiguration> {
     )
     .await?
     .ok_or_else(|| {
-        anyhow::anyhow!("Aegis login configuration is missing; run aegis admin setup")
+        anyhow::anyhow!("Aegis login configuration is missing; run aegis-admin setup")
     })?;
     options.validate()?;
     Ok(options)

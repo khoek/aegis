@@ -81,7 +81,7 @@ impl<'a> BrowserLogin<'a> {
     }
 }
 
-pub(crate) struct BrowserProof {
+pub struct BrowserProof {
     pub code: String,
     pub verifier: String,
     pub callback: Url,
@@ -107,11 +107,7 @@ impl BrowserProof {
     }
 }
 
-pub(crate) fn browser_proof(
-    api_base: &str,
-    remote: bool,
-    timeout: Duration,
-) -> Result<BrowserProof> {
+pub fn browser_proof(api_base: &str, remote: bool, timeout: Duration) -> Result<BrowserProof> {
     ui::require_interactive("Browser sign-in requires an interactive terminal")?;
     let prepare = ui::task(TaskOptions {
         label: "Preparing browser sign-in".into(),

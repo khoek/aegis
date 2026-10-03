@@ -1,8 +1,12 @@
 # Architecture
 
 `aegis-types` owns the wire format and validated configuration. `aegis-api` owns
-HTTP policy and fleet persistence. `aegis-tool` owns the CLI, host agent, and local
+HTTP policy and fleet persistence. `aegis-tool` owns the client and host agent; `aegis-admin` owns local
 administration. No crate depends on Deus or occultum.
+
+The client package has no database or GCP administration dependencies. The admin
+package uses its public client workflows for sign-in and enrollment, keeping both
+commands on the same credential, invitation, and progress-reporting paths.
 
 Rete supplies reusable HTTP, Firestore, OAuth, JWT, PKCE, and OIDC libraries.
 Capulus supplies CLI reporting and the managed installer. These are ordinary

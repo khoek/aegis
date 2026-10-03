@@ -132,14 +132,6 @@ pub(crate) fn application_agent_info(product: &ManagedProduct) -> Result<AgentIn
 }
 
 fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
-    if let Commands::Admin(args) = cli.command {
-        anyhow::ensure!(
-            cli.api_base.is_none() && cli.namespace.is_none(),
-            "admin commands select the deployment by --project; use their own namespace option when applicable"
-        );
-        return crate::admin::run(args);
-    }
-
     warn_if_agent_version_mismatch();
     let _system_lock = match command_system_lock_policy(&cli.command) {
         SystemLockPolicy::FullCommand => Some(crate::locks::local_system_lock()?),
@@ -168,7 +160,6 @@ fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
         None => selected_api_base,
     };
     match cli.command {
-        Commands::Admin(_) => unreachable!("admin commands dispatched before loading user context"),
         Commands::Agent(_) => unreachable!("agent commands bypass the interactive CLI"),
         Commands::List(args) => list::run(api_base_override.as_deref(), &args),
         Commands::Ssh(args) => ssh::run(api_base_override.as_deref(), &args),
@@ -295,9 +286,7 @@ enum SystemLockPolicy {
 
 fn command_system_lock_policy(command: &Commands) -> SystemLockPolicy {
     match command {
-        Commands::Admin(_) | Commands::Agent(_) | Commands::List(_) | Commands::Tunnel(_) => {
-            SystemLockPolicy::None
-        }
+        Commands::Agent(_) | Commands::List(_) | Commands::Tunnel(_) => SystemLockPolicy::None,
         Commands::Ssh(_) | Commands::Push(_) | Commands::Pull(_) => SystemLockPolicy::SshSetup,
         Commands::Manage(args) => manage_command_system_lock_policy(&args.command),
         Commands::Advanced(args) => advanced_command_system_lock_policy(&args.command),
@@ -1442,7 +1431,7 @@ fn known_hosts_target(host: &str, port: u16) -> String {
     }
 }
 
-pub(crate) fn check_local_enrollment_platform() -> Result<()> {
+pub fn check_local_enrollment_platform() -> Result<()> {
     system::LocalRoot::require_ubuntu()?;
     anyhow::ensure!(
         Path::new("/run/systemd/system").is_dir(),
@@ -1451,10 +1440,7 @@ pub(crate) fn check_local_enrollment_platform() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn setup_machine_ready(
-    api_base: &str,
-    expected: Option<&aegis_types::HostId>,
-) -> Result<bool> {
+pub fn local_machine_ready(api_base: &str, expected: Option<&aegis_types::HostId>) -> Result<bool> {
     if let Some(context) = crate::config::AgentContext::load()? {
         anyhow::ensure!(
             context.api_base == api_base,
@@ -1500,7 +1486,7 @@ pub(crate) fn setup_machine_ready(
     Ok(false)
 }
 
-pub(crate) fn enroll_setup_machine(api_base: &str, invitation: std::path::PathBuf) -> Result<()> {
+pub fn enroll_local_machine(api_base: &str, invitation: std::path::PathBuf) -> Result<()> {
     run_enroll(
         Some(api_base),
         &EnrollArgs {

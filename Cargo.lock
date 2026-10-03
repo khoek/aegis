@@ -19,6 +19,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis-admin"
+version = "0.2.0"
+dependencies = [
+ "aegis-tool",
+ "aegis-types",
+ "anyhow",
+ "arche-firestore",
+ "base64 0.23.1",
+ "capulus",
+ "clap",
+ "dialoguer",
+ "firestore",
+ "phylax-core",
+ "phylax-gcp",
+ "rcgen",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "ssh-key",
+ "tempfile",
+ "time",
+ "tokio",
+ "url",
+ "uuid",
+ "x509-parser",
+]
+
+[[package]]
 name = "aegis-api"
 version = "0.2.0"
 dependencies = [
@@ -57,23 +86,18 @@ version = "0.2.0"
 dependencies = [
  "aegis-types",
  "anyhow",
- "arche-firestore",
  "axum",
  "base64 0.23.1",
  "capulus",
  "clap",
  "crossterm",
  "dialoguer",
- "firestore",
  "futures-util",
  "hickory-resolver",
  "libc",
  "oauth2",
  "phylax-core",
- "phylax-gcp",
- "phylax-oidc",
  "qrcode",
- "rcgen",
  "reqwest 0.13.4",
  "rtnetlink",
  "rustix",
@@ -90,7 +114,6 @@ dependencies = [
  "uuid",
  "vt100",
  "webbrowser",
- "x509-parser",
 ]
 
 [[package]]

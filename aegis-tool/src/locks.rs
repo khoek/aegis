@@ -21,7 +21,7 @@ pub fn local_system_lock() -> Result<InvocationLock> {
     acquire_user_scoped_lock(LOCAL_SYSTEM_LOCK_NAME)
 }
 
-pub(crate) fn deployment_lock(project: &str) -> Result<InvocationLock> {
+pub fn deployment_lock(project: &str) -> Result<InvocationLock> {
     acquire_user_scoped_lock(&format!(
         "aegis-deployment-{}",
         lock_hash(project.as_bytes())

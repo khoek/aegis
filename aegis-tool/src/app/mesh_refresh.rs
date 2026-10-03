@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -119,7 +118,11 @@ pub(super) fn trigger_remote_reconcile(
     api_base_override: Option<&str>,
     target: &CachedHost,
 ) -> Result<()> {
-    let exe = env::current_exe().context("failed to locate the current aegis executable")?;
+    let product = crate::managed::product()?;
+    let exe = product
+        .program()
+        .trusted_installed_path()
+        .context("failed to locate system Aegis for fleet reconciliation")?;
     let mut command = Command::new("timeout");
     command.arg(format!("{}s", REMOTE_REFRESH_TIMEOUT.as_secs()));
     command.arg(exe);

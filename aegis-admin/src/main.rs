@@ -11,18 +11,38 @@ use std::{future::Future, path::PathBuf, time::Duration};
 
 use aegis_types::{NamespaceId, NamespaceRole};
 use anyhow::{Context, Result, ensure};
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use phylax_core::OAuthAuthorizationCodeGrantRequest;
 use phylax_gcp::identity::UserRecord;
 
-use crate::{app::login, config, ui};
+use aegis_tool::{
+    client::{self, login},
+    ui,
+};
 use connection::Connection;
 use deployment::Deployment;
 
-#[derive(Debug, Args)]
-pub struct AdminArgs {
+#[derive(Debug, Parser)]
+#[command(
+    name = "aegis-admin",
+    version,
+    about = "Deploy and administer Aegis with local GCP credentials."
+)]
+struct AdminCli {
+    #[command(flatten)]
+    ui: aegis_tool::ui::UiArgs,
     #[command(subcommand)]
     command: AdminCommand,
+}
+
+fn main() -> capulus::CliTermination {
+    let args = AdminCli::parse();
+    if let Err(error) = ui::init(args.ui.options()) {
+        return capulus::CliTermination::without_ui(Err(error));
+    }
+    let result = run(args.command);
+    let result = ui::check_cancelled().and(result);
+    capulus::CliTermination::with_ui(ui::current(), result)
 }
 
 #[derive(Debug, Subcommand)]
@@ -33,7 +53,6 @@ enum AdminCommand {
         project: ProjectArgs,
         #[arg(long)]
         database: String,
-        #[arg(id = "admin_namespace", value_name = "NAMESPACE")]
         namespace: NamespaceId,
     },
     /// Deploy a complete Aegis installation using your local gcloud account.
@@ -114,24 +133,21 @@ enum UserCommand {
     },
     Grant {
         user: String,
-        #[arg(id = "admin_namespace", value_name = "NAMESPACE")]
         namespace: NamespaceId,
         #[arg(value_enum)]
         role: Role,
     },
     Revoke {
         user: String,
-        #[arg(id = "admin_namespace", value_name = "NAMESPACE")]
         namespace: NamespaceId,
     },
     Members {
-        #[arg(id = "admin_namespace", value_name = "NAMESPACE")]
         namespace: NamespaceId,
     },
 }
 
-pub(crate) fn run(args: AdminArgs) -> Result<i32> {
-    match args.command {
+fn run(command: AdminCommand) -> Result<i32> {
+    match command {
         AdminCommand::Connect {
             project,
             database,
@@ -141,7 +157,7 @@ pub(crate) fn run(args: AdminArgs) -> Result<i32> {
         AdminCommand::Configure(args) => deployment::configure_external(args)?,
         AdminCommand::Deploy { project, image } => {
             let mut deployment = Deployment::load(project)?;
-            let _lock = crate::locks::deployment_lock(&deployment.config.project)?;
+            let _lock = aegis_tool::client::deployment_lock(&deployment.config.project)?;
             deployment.deploy(&image)?;
         }
         AdminCommand::Doctor(args) => Deployment::load(args.project)?.doctor()?,
@@ -270,7 +286,7 @@ fn authorize(
                 client_id: "aegis-tool",
                 redirect_uri: proof.callback.as_str(),
                 code_verifier: &proof.verifier,
-                now_unix: config::now_unix(),
+                now_unix: client::now_unix(),
             })
             .await?
             .context("Browser identity proof expired or failed verification; sign in again")?;
@@ -306,6 +322,6 @@ fn authorize(
     proof.finish(&endpoint).with_context(|| format!(
         "Account {user_id} and namespace membership are committed; run `aegis --api-base {endpoint} manage login` to retry sign-in"
     ))?;
-    config::UserContext { api_base: endpoint }.persist()?;
+    client::UserContext { api_base: endpoint }.persist()?;
     Ok(())
 }

@@ -152,7 +152,7 @@ sudo chmod 644 {REMOTE_HOST_CERT_PATH}\n"
     }
 }
 
-pub(crate) fn system_program_bootstrap_script(use_sudo: bool) -> String {
+pub fn system_program_bootstrap_script(use_sudo: bool) -> String {
     format!(
         "{sudo}bash -seuo pipefail <<'EOF_AEGIS_BOOTSTRAP'\naegis_bootstrap_version={version}\n{script}\nEOF_AEGIS_BOOTSTRAP\n",
         sudo = if use_sudo { "sudo " } else { "" },

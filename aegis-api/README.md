@@ -9,7 +9,7 @@ GOOGLE_CLOUD_PROJECT=my-project FIRESTORE_DATABASE_ID=aegis \
 ```
 
 Initialize identity, accounts, namespaces, and certificate authorities with
-`aegis admin setup`, or `aegis admin configure` for an existing database and your
+`aegis-admin setup`, or `aegis-admin configure` for an existing database and your
 own hosting. The service uses Application Default Credentials; Cloud Run
 uses its attached service account. `PORT` defaults to 8080.
 

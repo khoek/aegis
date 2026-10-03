@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::ui::UiArgs;
 use aegis_types::{HostAlias, HostId};
 use capulus::managed::AgentLifecycleCommand;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -36,72 +37,8 @@ pub struct Cli {
     pub command: Commands,
 }
 
-#[derive(Clone, Copy, Debug, Args)]
-pub struct UiArgs {
-    #[arg(
-        long,
-        global = true,
-        value_enum,
-        default_value_t = UiProgressMode::Auto,
-        help = "Progress rendering mode (auto uses an interactive display on a terminal and plain status otherwise)"
-    )]
-    pub progress: UiProgressMode,
-
-    #[arg(
-        long,
-        global = true,
-        value_enum,
-        default_value_t = UiColorMode::Auto,
-        help = "Color rendering mode"
-    )]
-    pub color: UiColorMode,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub enum UiProgressMode {
-    #[default]
-    Auto,
-    Interactive,
-    Plain,
-    Off,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub enum UiColorMode {
-    #[default]
-    Auto,
-    Always,
-    Never,
-}
-
-pub trait CommandUiPolicy {
-    fn cancellation_mode(&self) -> capulus::ui::CancellationMode;
-}
-
-impl UiArgs {
-    pub fn options(self, command: &impl CommandUiPolicy) -> capulus::ui::UiOptions {
-        capulus::ui::UiOptions {
-            progress: match self.progress {
-                UiProgressMode::Auto => capulus::ui::ProgressMode::Auto,
-                UiProgressMode::Interactive => capulus::ui::ProgressMode::Interactive,
-                UiProgressMode::Plain => capulus::ui::ProgressMode::Plain,
-                UiProgressMode::Off => capulus::ui::ProgressMode::Off,
-            },
-            color: match self.color {
-                UiColorMode::Auto => capulus::ui::ColorMode::Auto,
-                UiColorMode::Always => capulus::ui::ColorMode::Always,
-                UiColorMode::Never => capulus::ui::ColorMode::Never,
-            },
-            cancellation: command.cancellation_mode(),
-            ..capulus::ui::UiOptions::default()
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Deploy and administer Aegis with local GCP credentials.
-    Admin(crate::admin::AdminArgs),
     #[command(hide = true)]
     Agent(AgentNamespaceArgs),
 
@@ -146,22 +83,6 @@ pub enum Commands {
         about = "Technical Aegis maintenance, recovery, and forced reconciliation commands."
     )]
     Advanced(AdvancedArgs),
-}
-
-impl CommandUiPolicy for Commands {
-    fn cancellation_mode(&self) -> capulus::ui::CancellationMode {
-        match self {
-            Self::Agent(_)
-            | Self::List(_)
-            | Self::Ssh(_)
-            | Self::Push(_)
-            | Self::Pull(_)
-            | Self::Tunnel(_)
-            | Self::Manage(_)
-            | Self::Advanced(_)
-            | Self::Admin(_) => capulus::ui::CancellationMode::Signal,
-        }
-    }
 }
 
 #[derive(Debug, Args)]
@@ -1181,12 +1102,12 @@ pub enum AgentCommands {
 
 #[cfg(test)]
 mod tests {
+    use crate::ui::{UiColorMode, UiProgressMode};
     use std::path::PathBuf;
 
     use super::{
-        AdvancedCommands, AgentTokenCommands, Cli, CommandUiPolicy, Commands, FleetCommands,
-        HostAliasCommands, HostCommands, ManageCommands, PrincipalCommands, SatelliteCommands,
-        TunnelCommands, UiColorMode, UiProgressMode,
+        AdvancedCommands, AgentTokenCommands, Cli, Commands, FleetCommands, HostAliasCommands,
+        HostCommands, ManageCommands, PrincipalCommands, SatelliteCommands, TunnelCommands,
     };
     use clap::{CommandFactory, Parser};
 
@@ -1232,11 +1153,11 @@ mod tests {
     }
 
     #[test]
-    fn command_ui_policy_handles_signals_for_interactive_commands() {
+    fn cli_ui_handles_signals_for_interactive_commands() {
         let list = Cli::try_parse_from(["aegis", "list"]).expect("list command should parse");
         assert_eq!(
             capulus::ui::CancellationMode::Signal,
-            list.command.cancellation_mode()
+            list.ui.options().cancellation
         );
     }
 

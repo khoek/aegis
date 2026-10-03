@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["aegis-types", "aegis-api", "aegis-tool"]
+members = ["aegis-types", "aegis-api", "aegis-tool", "aegis-admin"]
 
 [workspace.package]
 version = "0.2.0"
@@ -12,6 +12,7 @@ repository = "https://github.com/khoek/aegis"
 
 [workspace.dependencies]
 aegis-types = { path = "aegis-types", version = "0.2" }
+aegis-tool = { path = "aegis-tool", version = "0.2" }
 
 phylax-oidc = "0.1"
 arche-web = "0.1"

@@ -4,7 +4,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 publish.workspace = true
-description = "CLI for aegis SSH login, SSH access, install, and enrollment workflows."
+description = "Aegis SSH client and managed host agent."
 license.workspace = true
 readme = "README.md"
 repository.workspace = true
@@ -16,18 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 aegis-types = { workspace = true }
+
 capulus = { workspace = true, features = ["managed-system"] }
 phylax-core = { workspace = true }
-phylax-gcp = { workspace = true }
-phylax-oidc = { workspace = true }
-arche-firestore = { workspace = true }
-
 anyhow = { workspace = true }
-firestore = "0.53"
-rcgen = { version = "0.14", features = ["x509-parser"] }
 time = "0.3"
 uuid = { workspace = true }
-x509-parser = "0.18"
 axum = "0.8"
 base64 = { workspace = true }
 clap = { workspace = true }

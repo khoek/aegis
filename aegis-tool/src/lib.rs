@@ -1,10 +1,10 @@
-mod admin;
 mod agent;
 mod agent_credentials;
 mod api;
 mod app;
 mod apparmor;
 mod cli;
+pub mod client;
 mod command;
 mod config;
 mod egress_probe;
@@ -17,7 +17,7 @@ mod redeploy_version;
 mod release;
 mod system_user;
 mod tunnel_operation;
-mod ui;
+pub mod ui;
 mod wireguard_endpoint;
 
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub fn run_cli() -> capulus::CliTermination {
             "agent commands use the enrolled context in their configuration; --api-base and --namespace apply to CLI operations"
         )));
     }
-    let ui_configuration = ui_options.options(&command);
+    let ui_configuration = ui_options.options();
     match command {
         Commands::Agent(agent) => match agent.command {
             AgentCommands::DirectSsh => {

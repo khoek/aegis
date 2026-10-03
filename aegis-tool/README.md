@@ -1,24 +1,19 @@
 # aegis-tool
 
-The `aegis` CLI and managed host agent.
+The `aegis` client and managed host agent.
 
 ```sh
 cargo install --locked aegis-tool
-aegis admin setup
-aegis manage enroll --remote alice@server
+aegis manage enroll --local --invitation machine.json
 aegis ssh server
 ```
 
-Setup uses local `gcloud` credentials. Everyday access uses scoped Aegis credentials.
-Enrollment invitations carry their endpoint and namespace:
+Enrollment invitations carry their endpoint and namespace. The client library
+shares authentication and enrollment workflows with [`aegis-admin`](../aegis-admin);
+GCP and Firestore administration dependencies stay in that separate package.
 
-```sh
-aegis manage enroll --local --invitation machine.json
-```
-
-Use `aegis --help`, `aegis admin --help`, and `aegis manage --help` for commands.
-Progress goes to stderr; JSON and generated credentials go to stdout.
-`--progress plain --color never` gives stable log output.
+Use `aegis --help` and `aegis manage --help` for commands. Progress goes to stderr;
+JSON and credentials go to stdout. `--progress plain --color never` gives stable logs.
 
 [Setup](../docs/setup.md) · [Validation](tests/VALIDATION.md)
 

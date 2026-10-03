@@ -1,0 +1,37 @@
+[package]
+name = "aegis-admin"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Deploy and administer an Aegis installation with local GCP credentials."
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+keywords = ["cli", "ssh", "gcp", "deployment"]
+
+[dependencies]
+aegis-types = { workspace = true }
+aegis-tool = { workspace = true }
+
+arche-firestore = { workspace = true }
+capulus = { workspace = true }
+phylax-core = { workspace = true }
+phylax-gcp = { workspace = true }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+clap = { workspace = true }
+dialoguer = "0.12"
+firestore = "0.53"
+rcgen = { version = "0.14", features = ["x509-parser"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.11"
+ssh-key = { version = "0.6", features = ["ed25519", "rand_core", "std"] }
+tempfile = "3"
+time = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+uuid = { workspace = true }
+url = { workspace = true }
+x509-parser = "0.18"

@@ -8,6 +8,66 @@ pub use capulus::ui::{
 };
 use capulus::ui::{Ui, UiOptions};
 
+use clap::{Args, ValueEnum};
+
+#[derive(Clone, Copy, Debug, Default, Args)]
+pub struct UiArgs {
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = UiProgressMode::Auto,
+        help = "Progress rendering mode (auto uses an interactive display on a terminal and plain status otherwise)"
+    )]
+    pub progress: UiProgressMode,
+
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value_t = UiColorMode::Auto,
+        help = "Color rendering mode"
+    )]
+    pub color: UiColorMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum UiProgressMode {
+    #[default]
+    Auto,
+    Interactive,
+    Plain,
+    Off,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum UiColorMode {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl UiArgs {
+    pub fn options(self) -> capulus::ui::UiOptions {
+        capulus::ui::UiOptions {
+            progress: match self.progress {
+                UiProgressMode::Auto => capulus::ui::ProgressMode::Auto,
+                UiProgressMode::Interactive => capulus::ui::ProgressMode::Interactive,
+                UiProgressMode::Plain => capulus::ui::ProgressMode::Plain,
+                UiProgressMode::Off => capulus::ui::ProgressMode::Off,
+            },
+            color: match self.color {
+                UiColorMode::Auto => capulus::ui::ColorMode::Auto,
+                UiColorMode::Always => capulus::ui::ColorMode::Always,
+                UiColorMode::Never => capulus::ui::ColorMode::Never,
+            },
+            cancellation: capulus::ui::CancellationMode::Signal,
+            ..capulus::ui::UiOptions::default()
+        }
+    }
+}
+
 mod selector;
 pub(crate) use selector::{
     Choice, ChoiceStatus, ChoiceUpdate, Screen, SelectOptions, screen, select_live,

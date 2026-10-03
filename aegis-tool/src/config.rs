@@ -27,12 +27,12 @@ pub(crate) struct AgentContext {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UserContext {
+pub struct UserContext {
     pub api_base: String,
 }
 
 impl UserContext {
-    pub(crate) fn load() -> Result<Option<Self>> {
+    pub fn load() -> Result<Option<Self>> {
         match fs::read_to_string(app_dir()?.join("context.toml")) {
             Ok(raw) => {
                 let context: Self =
@@ -45,7 +45,7 @@ impl UserContext {
         }
     }
 
-    pub(crate) fn persist(&self) -> Result<()> {
+    pub fn persist(&self) -> Result<()> {
         namespace_endpoint(&self.api_base)?;
         atomic_write(
             &app_dir()?.join("context.toml"),
@@ -443,7 +443,7 @@ pub fn resolve_api_base(
 ) -> Result<String> {
     let selected = match cli_override.or(installed_api_base) {
         Some(value) => value.to_owned(),
-        None => UserContext::load()?.context("No Aegis deployment selected. Run `aegis admin setup`, select an enrollment file, or pass --api-base once.")?.api_base,
+        None => UserContext::load()?.context("No Aegis deployment selected. Run `aegis-admin setup`, select an enrollment file, or pass --api-base once.")?.api_base,
     };
     Ok(aegis_types::namespace::ApiEndpoint::parse(&selected)
         .map_err(anyhow::Error::msg)?

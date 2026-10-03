@@ -23,7 +23,7 @@ impl Connection {
         };
         let path = path(&project)?;
         let connection: Self = serde_json::from_slice(&fs::read(&path).with_context(|| format!(
-            "No Aegis administration connection for {project}; run `aegis admin setup` or `aegis admin connect NAMESPACE --project {project} --database DATABASE`"
+            "No Aegis administration connection for {project}; run `aegis-admin setup` or `aegis-admin connect NAMESPACE --project {project} --database DATABASE`"
         ))?)?;
         ensure!(
             connection.project == project,
@@ -120,14 +120,14 @@ impl Connection {
             endpoint: issuer,
         };
         connection.persist()?;
-        crate::config::UserContext {
+        aegis_tool::client::UserContext {
             api_base: ApiEndpoint::parse(&connection.endpoint)
                 .map_err(anyhow::Error::msg)?
                 .with_namespace(connection.namespace)
                 .base_url(),
         }
         .persist()?;
-        crate::ui::success(
+        aegis_tool::ui::success(
             "Administration connection and namespace saved; cloud configuration was not changed",
         );
         Ok(())
@@ -135,7 +135,7 @@ impl Connection {
 }
 fn path(project: &str) -> Result<PathBuf> {
     Gcloud::new(project.into())?;
-    Ok(crate::config::app_dir()?
+    Ok(aegis_tool::client::app_dir()?
         .join("administration")
         .join(format!("{project}.json")))
 }

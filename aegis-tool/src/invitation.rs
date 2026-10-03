@@ -11,7 +11,7 @@ use anyhow::{Context, Result, ensure};
 
 use crate::{api::AuthenticatedApiClient, config, ui};
 
-pub(crate) fn read(path: &Path) -> Result<AegisEnrollmentCredentialResponse> {
+pub fn read(path: &Path) -> Result<AegisEnrollmentCredentialResponse> {
     ensure!(
         fs::metadata(path)?.len() <= 64 * 1024,
         "enrollment invitation is too large"
@@ -45,7 +45,7 @@ pub(crate) fn save(invitation: &AegisEnrollmentCredentialResponse, path: &Path) 
     )
 }
 
-pub(crate) fn reserve(
+pub fn reserve(
     api: &mut AuthenticatedApiClient,
     alias: HostAlias,
     mode: AegisHostMode,
@@ -65,7 +65,7 @@ pub(crate) fn reserve(
     })
 }
 
-pub(crate) fn issue(
+pub fn issue(
     api: &mut AuthenticatedApiClient,
     host: &aegis_types::HostId,
 ) -> Result<(AegisEnrollmentCredentialResponse, PathBuf)> {
@@ -84,7 +84,7 @@ pub(crate) fn issue(
     Ok((invitation, path))
 }
 
-pub(crate) fn path(host: &aegis_types::HostId) -> Result<PathBuf> {
+pub fn path(host: &aegis_types::HostId) -> Result<PathBuf> {
     Ok(config::app_dir()?
         .join("enrollments")
         .join(format!("{host}.json")))
