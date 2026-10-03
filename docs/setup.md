@@ -33,7 +33,8 @@ installation. `aegis-admin deploy --image IMAGE@sha256:DIGEST` deploys a new rea
 revision before switching traffic.
 
 For another machine, use `aegis manage enroll --remote USER@HOST`. The command
-creates its reservation using your signed-in namespace administrator account.
+uses your SSH configuration and creates its reservation using your signed-in
+namespace administrator account. It asks for a sudo password only when needed.
 Alternatively, create a reservation with `aegis manage enrollment create`, save
 `aegis manage enrollment credential HOST_ID` to a mode-600 file, and run
 `aegis manage enroll --local --invitation FILE` there. Invitations contain the

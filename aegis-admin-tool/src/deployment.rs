@@ -683,10 +683,10 @@ impl Deployment {
             .context("Complete setup before deploying the API")?;
         let cloud = self.cloud()?;
         let services = cloud.json(&["run", "services", "list", "--region", &self.config.region])?;
-        if let Some(existing) = array(&services)?
+        let existing = array(&services)?
             .iter()
-            .find(|s| s["metadata"]["name"] == SERVICE)
-        {
+            .find(|s| s["metadata"]["name"] == SERVICE);
+        if let Some(existing) = existing {
             ensure!(
                 existing["metadata"]["labels"]["managed-by"] == "aegis",
                 "existing Cloud Run service is not managed by Aegis"
@@ -698,34 +698,60 @@ impl Deployment {
             &json!({"GOOGLE_CLOUD_PROJECT":self.config.project, "FIRESTORE_DATABASE_ID":DATABASE}),
         )?;
         env.flush()?;
-        let service = cloud.json(&["run", "deploy", SERVICE, "--region", &self.config.region, "--image", image,
-            "--service-account", &self.runtime_account(), "--env-vars-file", env.path().to_str().context("invalid temporary file path")?,
-            "--set-secrets", &format!("AEGIS_OIDC_CLIENT_SECRET={SECRET}:{version}"), "--labels", OWNER_LABEL,
-            "--port=8080", "--memory=512Mi", "--cpu=1", "--min=0", "--max=3", "--timeout=60s",
+        let account = self.runtime_account();
+        let secret = format!("AEGIS_OIDC_CLIENT_SECRET={SECRET}:{version}");
+        let mut args = vec![
+            "run",
+            "deploy",
+            SERVICE,
+            "--region",
+            &self.config.region,
+            "--image",
+            image,
+            "--service-account",
+            &account,
+            "--env-vars-file",
+            env.path().to_str().context("invalid temporary file path")?,
+            "--set-secrets",
+            &secret,
+            "--labels",
+            OWNER_LABEL,
+            "--port=8080",
+            "--memory=512Mi",
+            "--cpu=1",
+            "--min=0",
+            "--max=3",
+            "--timeout=60s",
             "--startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,timeoutSeconds=5,periodSeconds=10,failureThreshold=24",
-            "--tag=aegis-candidate", "--no-traffic", "--invoker-iam-check"])?;
+            "--tag=aegis-candidate",
+            if self.config.proxy_invoker.is_some() {
+                "--invoker-iam-check"
+            } else {
+                "--no-invoker-iam-check"
+            },
+        ];
+        if existing.is_some() {
+            args.push("--no-traffic");
+        }
+        let service = cloud.json(&args)?;
         let revision = text(&service["status"], "latestReadyRevisionName")?;
         ensure!(
             service["status"]["latestCreatedRevisionName"] == revision,
             "new API revision is not ready; existing traffic is retained"
         );
-        let member = self
-            .config
-            .proxy_invoker
-            .as_ref()
-            .map(|s| format!("serviceAccount:{s}"))
-            .unwrap_or("allUsers".into());
-        cloud.json(&[
-            "run",
-            "services",
-            "add-iam-policy-binding",
-            SERVICE,
-            "--region",
-            &self.config.region,
-            "--member",
-            &member,
-            "--role=roles/run.invoker",
-        ])?;
+        if let Some(invoker) = &self.config.proxy_invoker {
+            cloud.json(&[
+                "run",
+                "services",
+                "add-iam-policy-binding",
+                SERVICE,
+                "--region",
+                &self.config.region,
+                "--member",
+                &format!("serviceAccount:{invoker}"),
+                "--role=roles/run.invoker",
+            ])?;
+        }
         cloud.json(&["run", "services", "update-traffic", SERVICE, "--region", &self.config.region,
             "--to-revisions", &format!("{revision}=100"), "--remove-tags=aegis-candidate"])
             .context("API revision is ready but traffic cutover was not confirmed; inspect Cloud Run before retrying")?;

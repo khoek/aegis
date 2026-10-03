@@ -171,6 +171,16 @@ fn externally_hosted_configuration_and_discovery_do_not_provision_cloud_resource
 #[test]
 #[ignore = "requires a loopback FIRESTORE_EMULATOR_HOST"]
 fn setup_resumes_after_deploy_failure_without_replacing_keys_or_secrets() {
+    setup_resume(None);
+}
+
+#[test]
+#[ignore = "requires a loopback FIRESTORE_EMULATOR_HOST"]
+fn proxied_setup_retains_cloud_run_authentication() {
+    setup_resume(Some("proxy@example-project.iam.gserviceaccount.com"));
+}
+
+fn setup_resume(proxy_invoker: Option<&str>) {
     assert!(
         std::env::var("FIRESTORE_EMULATOR_HOST")
             .unwrap()
@@ -221,6 +231,11 @@ fn setup_resumes_after_deploy_failure_without_replacing_keys_or_secrets() {
                 "--yes",
                 "--no-enroll",
             ]);
+        if let Some(invoker) = proxy_invoker {
+            command
+                .env("AEGIS_TEST_PROXY_INVOKER", invoker)
+                .args(["--proxy-invoker", invoker]);
+        }
         if attempt == 0 {
             command
                 .args([

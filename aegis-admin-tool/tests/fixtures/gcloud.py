@@ -54,8 +54,13 @@ elif command == ("secrets", "versions", "access"):
 elif args[:2] == ["secrets", "add-iam-policy-binding"]:
     pass
 elif command == ("run", "services", "list"):
-    result = []
+    result = [state["service"]] if "service" in state else []
 elif args[:2] == ["run", "deploy"]:
+    assert ("--no-traffic" in args) == ("service" in state)
+    private = "AEGIS_TEST_PROXY_INVOKER" in os.environ
+    assert ("--invoker-iam-check" in args) == private
+    assert ("--no-invoker-iam-check" in args) != private
+    state["service"] = {"metadata": {"name": "aegis-api", "labels": {"managed-by": "aegis"}}}
     path.write_text(json.dumps(state))
     print("simulated image pull failure; no traffic changed", file=sys.stderr)
     sys.exit(1)

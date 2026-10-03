@@ -87,7 +87,8 @@ pub(super) struct BootstrapSession<'a> {
     target: &'a RemoteTarget,
     _control_dir: TempDir,
     control_socket: PathBuf,
-    _local_askpass: TempPath,
+    _local_askpass: Option<TempPath>,
+    sudo_password_helper: bool,
 }
 
 impl<'a> BootstrapSession<'a> {
@@ -104,34 +105,57 @@ impl<'a> BootstrapSession<'a> {
             visibility: ui::TaskVisibility::Immediate,
             ..ui::TaskOptions::default()
         })?;
+        let control_dir =
+            tempfile::tempdir().context("failed to create temporary control socket dir")?;
+        let control_socket = control_dir.path().join(socket_name);
         let result = (|| {
-            task.set_phase("waiting for the remote machine password");
-            let password = ui::suspend(|| prompt.read(target))?;
-            let local_askpass = LocalAskpassScript::new(&password).write()?;
-            let control_dir =
-                tempfile::tempdir().context("failed to create temporary control socket dir")?;
-            let control_socket = control_dir.path().join(socket_name);
-
-            task.set_phase("opening the public SSH control connection");
-            ui::suspend(|| {
-                target.open_password_control_master(&control_socket, local_askpass.as_ref())
-            })?;
-            task.set_phase("installing the remote sudo password helper");
-            target.install_sudo_password_helper(&control_socket, &password)?;
-
-            Ok(Self {
-                target,
-                _control_dir: control_dir,
-                control_socket,
-                _local_askpass: local_askpass,
-            })
+            let password = env::var("AEGIS_REMOTE_PASSWORD")
+                .ok()
+                .filter(|password| !password.is_empty());
+            let local_askpass = password
+                .as_deref()
+                .map(|password| LocalAskpassScript::new(password).write())
+                .transpose()?;
+            task.set_phase("opening SSH with your configured credentials");
+            ui::suspend(|| target.open_control_master(&control_socket, local_askpass.as_deref()))?;
+            task.set_phase("checking remote sudo authorization");
+            let sudo = run_capture(&mut target.ambient_ssh_command(
+                Some("sudo -n -v"),
+                Some(&control_socket),
+                TtyMode::None,
+                ControlMasterMode::Default,
+            ))?;
+            let sudo_password_helper = !sudo.status.success();
+            if sudo_password_helper {
+                anyhow::ensure!(
+                    sudo.status.code() == Some(1),
+                    "cannot check remote sudo authorization: {}",
+                    sudo.stderr.trim()
+                );
+                task.set_phase("waiting for remote sudo authorization");
+                let password = match password {
+                    Some(password) => password,
+                    None => ui::suspend(|| prompt.read(target))?,
+                };
+                target.install_sudo_password_helper(&control_socket, &password)?;
+            }
+            Ok((local_askpass, sudo_password_helper))
         })();
         match result {
-            Ok(session) => {
+            Ok((local_askpass, sudo_password_helper)) => {
                 task.finish("Bootstrap SSH control connection is ready");
-                Ok(session)
+                Ok(Self {
+                    target,
+                    _control_dir: control_dir,
+                    control_socket,
+                    _local_askpass: local_askpass,
+                    sudo_password_helper,
+                })
             }
             Err(error) => {
+                if control_socket.exists() {
+                    let _ = target.close_control_master(&control_socket);
+                }
                 task.fail("Bootstrap SSH connection failed");
                 Err(error)
             }
@@ -186,9 +210,12 @@ impl<'a> BootstrapSession<'a> {
     }
 
     pub(super) fn cleanup(&self) -> Result<()> {
-        let helper = self
-            .target
-            .remove_sudo_password_helper(&self.control_socket);
+        let helper = if self.sudo_password_helper {
+            self.target
+                .remove_sudo_password_helper(&self.control_socket)
+        } else {
+            Ok(())
+        };
         let control = self.target.close_control_master(&self.control_socket);
         helper.and(control)
     }
@@ -393,9 +420,8 @@ impl EnrollState {
 }
 
 impl RemoteTarget {
-    fn ambient_ssh_command(
+    fn ssh_command(
         &self,
-        remote_command: Option<&str>,
         control_socket: Option<&Path>,
         tty: TtyMode,
         control_master: ControlMasterMode,
@@ -404,13 +430,13 @@ impl RemoteTarget {
         command.arg(tty.arg());
         command.args([
             "-o",
-            "StrictHostKeyChecking=no",
+            "StrictHostKeyChecking=accept-new",
             "-o",
-            "UserKnownHostsFile=/dev/null",
+            "ConnectTimeout=15",
             "-o",
-            "GlobalKnownHostsFile=/dev/null",
+            "ServerAliveInterval=15",
             "-o",
-            "UpdateHostKeys=no",
+            "ServerAliveCountMax=4",
         ]);
         command.arg("-p");
         command.arg(self.port.to_string());
@@ -427,6 +453,17 @@ impl RemoteTarget {
                 command.args(["-M", "-N", "-f", "-o", "ControlPersist=600"]);
             }
         };
+        command
+    }
+
+    fn ambient_ssh_command(
+        &self,
+        remote_command: Option<&str>,
+        control_socket: Option<&Path>,
+        tty: TtyMode,
+        control_master: ControlMasterMode,
+    ) -> Command {
+        let mut command = self.ssh_command(control_socket, tty, control_master);
         command.arg(format!("{}@{}", self.user, self.host));
         if let Some(remote_command) = remote_command {
             command.arg(remote_command);
@@ -442,8 +479,7 @@ impl RemoteTarget {
         control_master: ControlMasterMode,
         askpass_path: &Path,
     ) -> Command {
-        let mut command =
-            self.ambient_ssh_command(remote_command, control_socket, tty, control_master);
+        let mut command = self.ssh_command(control_socket, tty, control_master);
         command.env("SSH_ASKPASS", askpass_path);
         command.env("SSH_ASKPASS_REQUIRE", "force");
         if env::var_os("DISPLAY").is_none() {
@@ -471,13 +507,17 @@ impl RemoteTarget {
             "-o",
             "ConnectTimeout=10",
         ]);
+        command.arg(format!("{}@{}", self.user, self.host));
+        if let Some(remote_command) = remote_command {
+            command.arg(remote_command);
+        }
         command
     }
 
-    fn open_password_control_master(
+    fn open_control_master(
         &self,
         control_socket: &Path,
-        askpass_path: &Path,
+        askpass_path: Option<&Path>,
     ) -> Result<()> {
         if control_socket.exists() {
             let _ = fs::remove_file(control_socket);
@@ -486,13 +526,21 @@ impl RemoteTarget {
             capulus::store::ensure_directory(parent, Some(0o700))?;
         }
 
-        let mut command = self.password_ambient_ssh_command(
-            None,
-            Some(control_socket),
-            TtyMode::None,
-            ControlMasterMode::Background,
-            askpass_path,
-        );
+        let mut command = match askpass_path {
+            Some(path) => self.password_ambient_ssh_command(
+                None,
+                Some(control_socket),
+                TtyMode::None,
+                ControlMasterMode::Background,
+                path,
+            ),
+            None => self.ambient_ssh_command(
+                None,
+                Some(control_socket),
+                TtyMode::None,
+                ControlMasterMode::Background,
+            ),
+        };
         run_status_streaming(&mut command, "open ambient ssh control master")?;
 
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -676,5 +724,58 @@ impl<'a> SudoPasswordScript<'a> {
             ),
             REMOTE_SUDO_PASSWORD_HELPER_PATH = REMOTE_SUDO_PASSWORD_HELPER_PATH,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_ssh_keeps_credentials_and_host_verification() {
+        let target = RemoteTarget::parse("operator@machine", None, None).unwrap();
+        let command = target.ambient_ssh_command(
+            Some("sudo -n -v"),
+            None,
+            TtyMode::None,
+            ControlMasterMode::Default,
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(&args[args.len() - 2..], &["operator@machine", "sudo -n -v"]);
+        assert!(args.contains(&"StrictHostKeyChecking=accept-new"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("UserKnownHostsFile="))
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("PubkeyAuthentication="))
+        );
+    }
+
+    #[test]
+    fn explicit_password_options_precede_the_ssh_destination() {
+        let target = RemoteTarget::parse("operator@machine", None, None).unwrap();
+        let command = target.password_ambient_ssh_command(
+            None,
+            Some(Path::new("/tmp/control")),
+            TtyMode::None,
+            ControlMasterMode::Background,
+            Path::new("/tmp/askpass"),
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(args.last(), Some(&"operator@machine"));
+        assert!(args.contains(&"PreferredAuthentications=password,keyboard-interactive"));
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "SSH_ASKPASS" && value == Some(std::ffi::OsStr::new("/tmp/askpass"))
+        }));
     }
 }

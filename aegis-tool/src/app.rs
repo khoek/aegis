@@ -482,7 +482,7 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
                 remote,
                 "ambient-unenroll.sock",
                 remote::PasswordPrompt::new(&format!(
-                    "Enter the password for {}@{}.\n\naegis will reuse it for the SSH connection and remote sudo.",
+                    "Remote sudo requires the password for {}@{}.",
                     remote.user, remote.host
                 )),
             )?;
@@ -887,7 +887,7 @@ fn run_enroll_invitation(
                 remote,
                 "ambient-enroll.sock",
                 remote::PasswordPrompt::new(&format!(
-                    "Enter the password for {}@{}.\n\naegis will reuse it for the initial SSH connection and remote sudo.",
+                    "Remote sudo requires the password for {}@{}.",
                     remote.user, remote.host
                 )),
             ) {

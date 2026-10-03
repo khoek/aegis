@@ -17,7 +17,7 @@ else
   fi
   bash -seuo pipefail <<'EOF_AEGIS_SYSTEM_BOOTSTRAP'
 umask 077
-bootstrap="$(mktemp -d /run/aegis-system-bootstrap.XXXXXX)"
+bootstrap="$(mktemp -d /var/tmp/aegis-system-bootstrap.XXXXXX)"
 test -d /usr/local/bin
 test ! -L /usr/local/bin
 test "$(stat -c '%u:%g' /usr/local/bin)" = "0:0"
@@ -27,8 +27,10 @@ trap 'rm -rf -- "$bootstrap"; rm -f -- "$system_stage"' EXIT
 cd "$bootstrap"
 export CARGO_HOME="$bootstrap/cargo"
 export RUSTUP_HOME="$bootstrap/rustup"
+export CARGO_TARGET_DIR="$bootstrap/target"
+export TMPDIR="$bootstrap/tmp"
 install_root="$bootstrap/install"
-mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$install_root"
+mkdir -p "$CARGO_HOME" "$RUSTUP_HOME" "$TMPDIR" "$install_root"
 case "$(uname -m)" in
   x86_64) rust_target=x86_64-unknown-linux-gnu ;;
   aarch64) rust_target=aarch64-unknown-linux-gnu ;;
