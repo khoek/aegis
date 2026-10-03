@@ -20,6 +20,8 @@ elif command == ("projects", "describe", project):
     result = {"projectNumber": "1234567890"}
 elif args[:2] == ["auth", "print-access-token"]:
     result = "owner"  # Firestore emulator's documented administrator credential.
+elif args[:2] == ["auth", "list"]:
+    result = [{"account": "operator@example.com", "status": "ACTIVE"}]
 elif command == ("firestore", "databases", "list"):
     result = [state["database"]] if "database" in state else []
 elif command == ("firestore", "databases", "create"):

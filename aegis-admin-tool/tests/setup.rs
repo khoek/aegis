@@ -44,6 +44,7 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
     assert!(output.stdout.is_empty());
     assert!(!output.stderr.contains('\x1b'));
     for expected in [
+        "Use operator@example.com in the Google Cloud Console.",
         "https://console.cloud.google.com/auth/overview?project=aegis-fresh-test",
         "https://console.cloud.google.com/auth/clients?project=aegis-fresh-test",
         "Audience → Test users",
@@ -54,9 +55,11 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
     }
     let cloud: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
     let calls = cloud["calls"].as_array().unwrap();
-    assert_eq!(calls.len(), 1);
+    assert_eq!(calls.len(), 2);
     assert_eq!(calls[0][0], "projects");
     assert_eq!(calls[0][1], "describe");
+    assert_eq!(calls[1][0], "auth");
+    assert_eq!(calls[1][1], "list");
     assert!(
         !dir.path()
             .join(".aegis/deployments/aegis-fresh-test.json")

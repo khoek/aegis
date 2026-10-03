@@ -118,17 +118,7 @@ pub(super) fn ensure(deployment: &mut Deployment) -> Result<()> {
             ])?;
         }
     }
-    let accounts = cloud.json(&["auth", "list", "--filter=status:ACTIVE"])?;
-    let account = text(
-        array(&accounts)?
-            .first()
-            .context("No active gcloud account; run gcloud auth login")?,
-        "account",
-    )?;
-    ensure!(
-        !account.ends_with(".gserviceaccount.com"),
-        "setup requires your local gcloud user account"
-    );
+    let account = cloud.user_account()?;
     cloud.json(&[
         "projects",
         "add-iam-policy-binding",

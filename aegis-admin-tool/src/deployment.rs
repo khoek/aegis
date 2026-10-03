@@ -881,8 +881,10 @@ fn read_oauth_client(
     if let Some(path) = path {
         return GoogleWebClient::read(path, endpoint);
     }
+    let account = Gcloud::new(project.into())?.user_account()?;
     ui::stage(&format!(
         "Set up Google sign-in for project {project}:\n\
+         Use {account} in the Google Cloud Console.\n\
          1. Open https://console.cloud.google.com/auth/overview?project={project}\n\
             If prompted, choose Get started, name the app Aegis, and select your email and audience.\n\
             For External / Testing, add yourself and other sign-in users under Audience → Test users.\n\

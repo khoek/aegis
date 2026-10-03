@@ -71,6 +71,20 @@ impl Gcloud {
         Ok(token)
     }
 
+    pub fn user_account(&self) -> Result<String> {
+        let accounts = self.json(&["auth", "list", "--filter=status:ACTIVE"])?;
+        let account = accounts
+            .as_array()
+            .and_then(|accounts| accounts.first())
+            .and_then(|account| account["account"].as_str())
+            .context("No active gcloud account; run gcloud auth login")?;
+        ensure!(
+            !account.ends_with(".gserviceaccount.com"),
+            "setup requires your local gcloud user account"
+        );
+        Ok(account.into())
+    }
+
     pub fn stream(&self, args: &[&str], input: &[u8], timeout: Duration) -> Result<()> {
         let mut command = Command::new("gcloud");
         command
