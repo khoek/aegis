@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use aegis_dto::DEFAULT_AEGIS_NETWORK;
@@ -141,7 +141,7 @@ impl<'a> RedeployCommand<'a> {
         }
         let target_version = RedeployVersion::explicit(&release.version.to_string())
             .context("local Aegis agent returned an invalid redeploy version")?;
-        if !user_program_is_current(&target_version) {
+        if user_program_requires_update(&target_version)? {
             schedule.set_phase(format!(
                 "updating this login user's aegis CLI to v{target_version}"
             ));
@@ -174,9 +174,7 @@ impl<'a> RedeployCommand<'a> {
         }
         if self.args.wait {
             wait_for_local_redeploy(&job, &target_version_text)?;
-            ui::success(&format!(
-                "Managed aegis v{target_version} is running; this login user's CLI was updated before the system cutover."
-            ));
+            ui::success(&format!("Managed aegis v{target_version} is running."));
         }
         Ok(0)
     }
@@ -192,7 +190,7 @@ pub(super) fn update_user(args: &UpdateUserArgs) -> Result<i32> {
     })?;
     task.set_phase("resolving the exact published release");
     resolve_exact_release(&version)?;
-    let changed = if user_program_is_current(&version) {
+    let changed = if !user_program_requires_update(&version)? {
         false
     } else {
         task.set_phase("running the invoking user's Cargo installation");
@@ -205,7 +203,7 @@ pub(super) fn update_user(args: &UpdateUserArgs) -> Result<i32> {
     task.finish(if changed {
         format!("Updated this login user's aegis CLI to v{version}")
     } else {
-        format!("This login user's aegis CLI is already v{version}")
+        "User CLI ready; system installations follow the managed agent release".to_string()
     });
     if args.json {
         println!(
@@ -217,7 +215,7 @@ pub(super) fn update_user(args: &UpdateUserArgs) -> Result<i32> {
 }
 
 pub(super) fn ensure_user_program(version: &RedeployVersion) -> Result<bool> {
-    if user_program_is_current(version) {
+    if !user_program_requires_update(version)? {
         Ok(false)
     } else {
         resolve_exact_release(version)?;
@@ -239,31 +237,45 @@ fn resolve_exact_release(
     Ok(release)
 }
 
-pub(super) fn user_program_is_current(version: &RedeployVersion) -> bool {
-    if rustix::process::geteuid().is_root() {
-        return true;
-    }
-    user_program_update(version).is_ok_and(|update| update.is_current())
+pub(super) fn user_program_requires_update(version: &RedeployVersion) -> Result<bool> {
+    Ok(user_program_update(version)?.is_some_and(|update| !update.is_current()))
 }
 
 fn install_user_program(version: &RedeployVersion) -> Result<()> {
-    if rustix::process::geteuid().is_root() {
-        return Ok(());
+    if let Some(update) = user_program_update(version)? {
+        ui::suspend(|| update.install(ui::current().cancellation()))?;
     }
-    let update = user_program_update(version)?;
-    ui::suspend(|| update.install(ui::current().cancellation()))
+    Ok(())
 }
 
-fn user_program_update(version: &RedeployVersion) -> Result<capulus::managed::UserProgramUpdate> {
+fn user_program_update(
+    version: &RedeployVersion,
+) -> Result<Option<capulus::managed::UserProgramUpdate>> {
+    if rustix::process::geteuid().is_root() {
+        return Ok(None);
+    }
+    user_program_update_at(version, capulus::managed::current_user_cargo_root()?)
+}
+
+fn user_program_update_at(
+    version: &RedeployVersion,
+    cargo_root: PathBuf,
+) -> Result<Option<capulus::managed::UserProgramUpdate>> {
+    match std::fs::symlink_metadata(cargo_root.join("bin/aegis")) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("failed to inspect the user Aegis installation"),
+    }
     UserProgramUpdateOptions {
         package: "aegis-tool".to_string(),
         cargo_binary: "aegis".to_string(),
         version: version.to_string(),
         registry: Some("crates-io".into()),
-        cargo_root: capulus::managed::current_user_cargo_root()?,
+        cargo_root,
         timeout: Duration::from_secs(60 * 60),
     }
     .validate()
+    .map(Some)
 }
 
 pub(super) fn redeploy_status(args: &RedeployStatusArgs) -> Result<i32> {
@@ -454,5 +466,48 @@ impl<'a> AgentTokenRotateCommand<'a> {
             }
         }
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn managed_system_users_do_not_need_a_cargo_installation() {
+        let directory = tempfile::tempdir().unwrap();
+        let cargo_root = directory.path().join(".cargo");
+        let version = RedeployVersion::explicit("1.2.3").unwrap();
+        assert!(
+            user_program_update_at(&version, cargo_root.clone())
+                .unwrap()
+                .is_none()
+        );
+        assert!(!cargo_root.exists());
+        std::fs::create_dir_all(cargo_root.join("bin")).unwrap();
+        assert!(
+            user_program_update_at(&version, cargo_root)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn existing_user_installations_are_checked_independently_of_the_system() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("bin/aegis");
+        std::fs::create_dir(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, "#!/bin/sh\necho aegis 1.2.3\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for (version, current) in [("1.2.3", true), ("1.2.4", false)] {
+            let update = user_program_update_at(
+                &RedeployVersion::explicit(version).unwrap(),
+                directory.path().to_path_buf(),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(update.is_current(), current);
+        }
     }
 }

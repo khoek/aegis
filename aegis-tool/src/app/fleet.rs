@@ -718,7 +718,7 @@ impl Worker {
         let system_version = probe_system_version(&mut target, &self.target_version, reporter);
         match system_version {
             agent_version::State::Current => {
-                if target.requires_user_update(&self.target_version) {
+                if target.requires_user_update(&self.target_version)? {
                     reporter.status(Status::Installing(0));
                     target.update_user(&self.target_version)?;
                 }
@@ -731,7 +731,7 @@ impl Worker {
             }
             agent_version::State::Unknown | agent_version::State::Older(_) => {}
         }
-        let update_user = target.requires_user_update(&self.target_version);
+        let update_user = target.requires_user_update(&self.target_version)?;
         if update_user && matches!(&target, Target::Local) {
             reporter.status(Status::Installing(0));
             target.update_user(&self.target_version)?;
@@ -842,10 +842,10 @@ struct RemoteTarget {
 }
 
 impl Target {
-    fn requires_user_update(&self, target_version: &RedeployVersion) -> bool {
+    fn requires_user_update(&self, target_version: &RedeployVersion) -> Result<bool> {
         match self {
-            Self::Local => !maintenance::user_program_is_current(target_version),
-            Self::Remote(remote) => remote.prepared.ssh_user() != "root",
+            Self::Local => maintenance::user_program_requires_update(target_version),
+            Self::Remote(remote) => Ok(remote.prepared.ssh_user() != "root"),
         }
     }
 
@@ -1151,7 +1151,7 @@ pub(super) fn remote_redeploy_command(
     let update_user = if update_user {
         format!(
             "if ! /usr/local/bin/aegis advanced update-user --version {target_version} --json >/dev/null; then\n  echo 'remote user CLI update failed; system redeploy was not scheduled' >&2\n  exit 1\nfi\n\
-             echo 'remote user CLI update completed; scheduling system redeploy' >&2\n"
+             echo 'remote user CLI ready; scheduling system redeploy' >&2\n"
         )
     } else {
         String::new()
@@ -1159,9 +1159,10 @@ pub(super) fn remote_redeploy_command(
     format!(
         "if ! test -S {}; then\n  echo 'the remote Capulus management socket is unavailable' >&2\n  exit 1\nfi\n\
          {update_user}\
-         if test \"$(id -u)\" -eq 0; then\n  aegis_program={}\nelse\n  aegis_program=\"$HOME/{}\"\nfi\n\
+         if test \"$(id -u)\" -eq 0 || ! test -e \"$HOME/{}\"; then\n  aegis_program={}\nelse\n  aegis_program=\"$HOME/{}\"\nfi\n\
          exec \"$aegis_program\" advanced redeploy --version {target_version} --json\n",
         super::sh_quote(crate::managed::MANAGEMENT_SOCKET_PATH),
+        aegis_dto::layout::USER_BINARY_RELATIVE_PATH,
         super::sh_quote(aegis_dto::layout::SYSTEM_BINARY_PATH),
         aegis_dto::layout::USER_BINARY_RELATIVE_PATH,
     )
@@ -1276,7 +1277,7 @@ mod tests {
         assert!(
             command.contains("remote user CLI update failed; system redeploy was not scheduled")
         );
-        assert!(command.contains("remote user CLI update completed; scheduling system redeploy"));
+        assert!(command.contains("remote user CLI ready; scheduling system redeploy"));
         assert!(command.contains("aegis_program=\"$HOME/.cargo/bin/aegis\""));
         assert!(command.contains("aegis_program=/usr/local/bin/aegis"));
         assert!(command.contains("exec \"$aegis_program\" advanced redeploy"));
