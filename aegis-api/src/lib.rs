@@ -1,3 +1,4 @@
+use anyhow::Context;
 mod aegis_store;
 mod config;
 mod endpoint;
@@ -9,27 +10,31 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct ApplicationOptions {
     pub database: arche_firestore::DatabaseOptions,
-    pub oidc_client_secret: String,
+    pub oidc_client_secret: Option<String>,
 }
 
 pub struct ApplicationConfig {
     database: arche_firestore::DatabaseConfig,
-    oidc_client_secret: String,
+    oidc_client_secret: Option<String>,
 }
 
 impl ApplicationOptions {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             database: arche_firestore::DatabaseOptions::from_env(),
-            oidc_client_secret: std::env::var(aegis_dto::identity::OIDC_SECRET_ENV).map_err(
-                |_| anyhow::anyhow!("AEGIS_OIDC_CLIENT_SECRET must be supplied to the API runtime"),
-            )?,
+            oidc_client_secret: match std::env::var(aegis_dto::identity::OIDC_SECRET_ENV) {
+                Ok(secret) => Some(secret),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(error) => return Err(error.into()),
+            },
         })
     }
 
     pub fn validate(self) -> anyhow::Result<ApplicationConfig> {
         anyhow::ensure!(
-            !self.oidc_client_secret.trim().is_empty(),
+            self.oidc_client_secret
+                .as_ref()
+                .is_none_or(|secret| !secret.trim().is_empty()),
             "OIDC client secret must not be empty"
         );
         Ok(ApplicationConfig {
@@ -48,50 +53,28 @@ impl ApplicationConfig {
 
 async fn application(
     db: arche_firestore::Db,
-    oidc_client_secret: String,
+    oidc_client_secret: Option<String>,
 ) -> anyhow::Result<Router> {
     let identity = identity::store(&db)?.load_config().await?;
     let identities = identity::store(&db)?;
-    let login = identity::load_login(&db).await?;
+    let authentication = identity::load_authentication(&db).await?;
+    let user_auth = identities.auth_store(&identity, authentication.login_session_ttl_seconds())?;
     let jwt_issuer = Arc::new(phylax_core::JwtIssuer::from_config(
         &identity.api_token.jwt_config(),
     )?);
-    let oauth = phylax_core::AuthorizationCodeOAuthEndpoint::new(
-        identities.auth_store(&identity, login.login_session_ttl_seconds)?,
-        phylax_oidc::OidcProvider::connect(
-            phylax_oidc::OidcOptions {
-                issuer_url: login.issuer_url.clone(),
-                client_id: login.client_id.clone(),
-                client_secret: oidc_client_secret,
-                redirect_uri: login.redirect_uri.clone(),
-            }
-            .validate()?,
-        )
-        .await?,
-        endpoint::oauth::OAuthAccessPolicy {
-            identities: identities.clone(),
-            provider: login.issuer_url.clone(),
-            public_client_id: "aegis-tool".into(),
-            audience: identity.api_token.audience.clone(),
-            base_scopes: vec!["aegis:read".into(), "aegis:user".into()],
-        },
-        jwt_issuer.clone(),
-        phylax_core::AuthorizationCodeOAuthConfig {
-            public_client_id: "aegis-tool".into(),
-            login_session_ttl_seconds: login.login_session_ttl_seconds,
-            authorization_code_ttl_seconds: login.authorization_code_ttl_seconds,
-            state_max_len: 512,
-        },
-    )?;
     let revoke = endpoint::oauth::UserRevokeTokenGrant {
-        auth: identities.auth_store(&identity, login.login_session_ttl_seconds)?,
+        auth: user_auth.clone(),
     };
-    let info = serde_json::json!({"issuer":identity.api_token.iss,"protocol":2,"version":env!("CARGO_PKG_VERSION")});
+    let info = serde_json::json!({"issuer":identity.api_token.iss,"protocol":2,"version":env!("CARGO_PKG_VERSION"),
+        "authentication":{"credentials":true,"oauth":authentication.oauth.is_some()}});
     let mut namespace_routes = Router::new();
     for namespace in firestore::list_aegis_namespaces(&db).await? {
         let store = firestore::AegisDb::new(db.clone(), namespace.clone());
         let config = firestore::load_aegis_instance_config(&store).await?;
-        let auth = store.auth_store(&identity.refresh_token, login.login_session_ttl_seconds)?;
+        let auth = store.auth_store(
+            &identity.refresh_token,
+            authentication.login_session_ttl_seconds(),
+        )?;
         let audience = format!(
             "{}/aegis/namespaces/{namespace}",
             identity.api_token.audience
@@ -126,7 +109,7 @@ async fn application(
     }
 
     use phylax_core::oauth::path::*;
-    let api = namespace_routes
+    let mut api = namespace_routes
         .route(
             "/info",
             get(move || {
@@ -134,13 +117,62 @@ async fn application(
                 async move { axum::Json(info) }
             }),
         )
-        .merge(phylax_core::authorization_code_oauth_router(
-            OAUTH_AUTHORIZE,
-            OAUTH_CALLBACK,
-            OAUTH_TOKEN,
-            oauth,
+        .merge(phylax_core::json_refresh_token_router(
+            aegis_dto::identity::USER_TOKEN_PATH,
+            endpoint::credentials::UserTokenGrant {
+                auth: user_auth,
+                identities: identities.clone(),
+                issuer: jwt_issuer.clone(),
+                audience: identity.api_token.audience.clone(),
+            },
         ))
-        .merge(phylax_core::form_revoke_token_router(OAUTH_REVOKE, revoke));
+        .merge(phylax_core::form_revoke_token_router(
+            aegis_dto::identity::USER_REVOKE_PATH,
+            revoke.clone(),
+        ));
+    if let Some(login) = authentication.oauth {
+        let oauth = phylax_core::AuthorizationCodeOAuthEndpoint::new(
+            identities.auth_store(&identity, login.login_session_ttl_seconds)?,
+            phylax_oidc::OidcProvider::connect(
+                phylax_oidc::OidcOptions {
+                    issuer_url: login.issuer_url.clone(),
+                    client_id: login.client_id.clone(),
+                    client_secret: oidc_client_secret
+                        .context("OAuth is enabled; supply AEGIS_OIDC_CLIENT_SECRET")?,
+                    redirect_uri: login.redirect_uri.clone(),
+                }
+                .validate()?,
+            )
+            .await?,
+            endpoint::oauth::OAuthAccessPolicy {
+                identities: identities.clone(),
+                provider: login.issuer_url.clone(),
+                public_client_id: "aegis-tool".into(),
+                audience: identity.api_token.audience.clone(),
+                base_scopes: vec!["aegis:read".into(), "aegis:user".into()],
+            },
+            jwt_issuer.clone(),
+            phylax_core::AuthorizationCodeOAuthConfig {
+                public_client_id: "aegis-tool".into(),
+                login_session_ttl_seconds: login.login_session_ttl_seconds,
+                authorization_code_ttl_seconds: login.authorization_code_ttl_seconds,
+                state_max_len: 512,
+            },
+        )?;
+        api = api
+            .merge(phylax_core::authorization_code_oauth_router(
+                OAUTH_AUTHORIZE,
+                OAUTH_CALLBACK,
+                OAUTH_TOKEN,
+                oauth,
+            ))
+            .merge(phylax_core::form_revoke_token_router(OAUTH_REVOKE, revoke));
+    } else {
+        anyhow::ensure!(
+            oidc_client_secret.is_none(),
+            "OIDC secret supplied but OAuth is not configured"
+        );
+    }
     Ok(Router::new()
         .route("/health", get(|| async { "OK" }))
         .nest("/v2", api))

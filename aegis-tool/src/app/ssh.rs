@@ -23,6 +23,8 @@ use crate::ui::{self, Task, TaskOptions, TaskVisibility};
 
 use super::{connect, host, known_hosts_target, list, local_agent, mesh_route};
 
+const DIRECT_SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
+
 pub(super) fn run(api_base_override: Option<&str>, args: &SshArgs) -> Result<i32> {
     let mut args = args.clone();
     if args.host.is_none() {
@@ -250,6 +252,9 @@ fn prepare_direct_session(
     let mut command = Command::new("ssh");
     command
         .args(["-F", "/dev/null"])
+        .arg("-o")
+        .arg(format!("ConnectTimeout={DIRECT_SSH_CONNECT_TIMEOUT_SECS}"))
+        .args(["-o", "ConnectionAttempts=1"])
         .args(["-o", "BatchMode=yes"])
         .args(["-o", "PreferredAuthentications=publickey"])
         .args(["-o", "PubkeyAuthentication=yes"])
@@ -276,7 +281,7 @@ fn prepare_direct_session(
         _temporary: temporary,
         command,
         summary: format!(
-            "aegis ssh {} · {}@{} · via hub broker",
+            "aegis ssh {} · {}@{} · via hub broker · connection timeout {DIRECT_SSH_CONNECT_TIMEOUT_SECS}s",
             certificate.target.aliases.primary(),
             login_principal,
             connect_host

@@ -1,5 +1,5 @@
 //! Operator-only setup and account administration. These operations are never HTTP routes.
-use super::identity::{self, LoginConfiguration};
+use super::identity::{self, AuthenticationConfiguration, LoginConfiguration};
 use anyhow::Context;
 use arche_firestore::{Db, create_typed_at, load_optional_typed_at};
 use firestore::FirestoreTransactionOps;
@@ -69,15 +69,17 @@ impl AdminConfig {
 pub struct SetupOptions {
     pub issuer_url: String,
     pub audience: String,
-    pub login: LoginConfiguration,
+    pub login: Option<LoginConfiguration>,
 }
 pub struct SetupConfig {
     identity: phylax_gcp::identity::ValidatedIdentityBootstrap,
-    login: LoginConfiguration,
+    login: Option<LoginConfiguration>,
 }
 impl SetupOptions {
     pub fn validate(self) -> anyhow::Result<SetupConfig> {
-        self.login.validate()?;
+        if let Some(login) = &self.login {
+            login.validate()?;
+        }
         let endpoint = aegis_dto::namespace::ApiEndpoint::parse(&self.issuer_url)
             .map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
@@ -86,10 +88,12 @@ impl SetupOptions {
                 && endpoint.service_url() == self.issuer_url,
             "issuer_url must be a canonical HTTPS service URL without a namespace"
         );
-        anyhow::ensure!(
-            self.login.redirect_uri == format!("{}/oauth/callback", endpoint.service_url()),
-            "OIDC callback must be issuer_url/oauth/callback"
-        );
+        if let Some(login) = &self.login {
+            anyhow::ensure!(
+                login.redirect_uri == format!("{}/oauth/callback", endpoint.service_url()),
+                "OIDC callback must be issuer_url/oauth/callback"
+            );
+        }
         Ok(SetupConfig {
             identity: IdentityBootstrapOptions {
                 issuer_url: self.issuer_url,
@@ -137,16 +141,19 @@ impl Admin {
         let identity = identity::store(&self.db)?;
         identity.bootstrap(config.identity).await?;
         let result = async {
-            let existing = load_optional_typed_at::<LoginConfiguration>(
+            let existing = load_optional_typed_at::<AuthenticationConfiguration>(
                 self.db.inner(),
                 identity.parent(),
                 "settings",
-                "login",
+                "authentication",
             )
             .await?;
             if let Some(existing) = existing {
                 anyhow::ensure!(
-                    serde_json::to_value(existing)? == serde_json::to_value(&config.login)?,
+                    serde_json::to_value(existing)?
+                        == serde_json::to_value(AuthenticationConfiguration {
+                            oauth: config.login.clone()
+                        })?,
                     "existing login configuration differs; setup never overwrites it"
                 );
             } else {
@@ -154,8 +161,10 @@ impl Admin {
                     self.db.inner(),
                     identity.parent(),
                     "settings",
-                    "login",
-                    &config.login,
+                    "authentication",
+                    &AuthenticationConfiguration {
+                        oauth: config.login,
+                    },
                 )
                 .await?;
             }
@@ -211,23 +220,53 @@ impl Admin {
         Ok(())
     }
     pub async fn add_user(&self, user: UserRecord, provider_subject: String) -> anyhow::Result<()> {
-        let login = identity::load_login(&self.db).await?;
+        let authentication = identity::load_authentication(&self.db).await?;
         identity::store(&self.db)?
             .create_user(
                 &user,
-                &ExternalIdentity {
-                    provider: login.issuer_url,
+                Some(&ExternalIdentity {
+                    provider: authentication
+                        .oauth
+                        .context("OAuth is not enabled")?
+                        .issuer_url,
                     provider_sub: provider_subject,
                     user_id: user.id.clone(),
-                },
+                }),
             )
             .await
     }
     pub async fn set_user_disabled(&self, user_id: &str, disabled: bool) -> anyhow::Result<()> {
-        identity::store(&self.db)?
-            .set_disabled(user_id, disabled)
-            .await
+        let identities = identity::store(&self.db)?;
+        identities.set_disabled(user_id, disabled).await?;
+        if disabled {
+            let config = identities.load_config().await?;
+            identities.auth_store(&config, 600)?.revoke_refresh_sessions_for_subject(
+                &phylax_core::Subject::new(format!("user:{user_id}"))?,
+                aegis_dto::identity::USER_CLIENT_ID, aegis_tool::client::now_unix(),
+            ).await.context("user disabled; session revocation incomplete, retry disable before re-enabling")?;
+        }
+        Ok(())
     }
+
+    pub async fn authorize_membership(
+        &self,
+        namespace: aegis_dto::NamespaceId,
+        user: &str,
+        requested: Option<aegis_dto::NamespaceRole>,
+    ) -> anyhow::Result<()> {
+        let existing = self.members(namespace.clone()).await?;
+        let role = match requested {
+            Some(role) => role,
+            None => match existing.get(user) {
+                Some(member) => {
+                    serde_json::from_value::<aegis_dto::NamespaceMembership>(member.clone())?.role
+                }
+                None => aegis_dto::NamespaceRole::Member,
+            },
+        };
+        self.set_membership(namespace, user, Some(role)).await
+    }
+
     pub async fn set_membership(
         &self,
         namespace: aegis_dto::NamespaceId,
@@ -341,10 +380,10 @@ impl Admin {
     }
     pub async fn status(&self) -> anyhow::Result<Value> {
         let identity = identity::store(&self.db)?.load_config().await?;
-        let login = identity::load_login(&self.db).await?;
+        let authentication = identity::load_authentication(&self.db).await?;
         let namespaces = self.namespaces().await?;
         Ok(
-            json!({ "issuer_url": identity.api_token.iss, "audience": identity.api_token.audience, "oidc_issuer": login.issuer_url, "namespaces": namespaces }),
+            json!({ "issuer_url": identity.api_token.iss, "audience": identity.api_token.audience, "oauth": authentication.oauth.is_some(), "namespaces": namespaces }),
         )
     }
 }
@@ -430,13 +469,13 @@ mod emulator_tests {
             SetupOptions {
                 issuer_url: "https://fleet.example/proxy/aegis".into(),
                 audience: "aegis-test".into(),
-                login: LoginConfiguration {
+                login: Some(LoginConfiguration {
                     issuer_url: "https://accounts.google.com".into(),
                     client_id: "test-client".into(),
                     redirect_uri: "https://fleet.example/proxy/aegis/oauth/callback".into(),
                     login_session_ttl_seconds: 600,
                     authorization_code_ttl_seconds: 300,
-                },
+                }),
             }
             .validate()
         };

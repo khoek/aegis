@@ -36,6 +36,7 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
                     "australia-southeast1",
                     "--yes",
                     "--no-enroll",
+                    "--oauth",
                 ]),
             None,
         )
@@ -137,14 +138,8 @@ fn externally_hosted_configuration_and_discovery_do_not_provision_cloud_resource
         if discover {
             command.args(["connect", "personal"]);
         } else {
-            command
-                .args([
-                    "configure",
-                    "--endpoint",
-                    "https://fleet.example/custom",
-                    "--oauth-client",
-                ])
-                .arg(&oauth);
+            command.args(["configure", "--endpoint", "https://fleet.example/custom"]);
+            command.arg("--oauth-client").arg(&oauth);
         }
         command.args(["--project", &project, "--database", "custom-database"]);
         let output = capulus::process::CaptureOptions::default()
@@ -171,16 +166,16 @@ fn externally_hosted_configuration_and_discovery_do_not_provision_cloud_resource
 #[test]
 #[ignore = "requires a loopback FIRESTORE_EMULATOR_HOST"]
 fn setup_resumes_after_deploy_failure_without_replacing_keys_or_secrets() {
-    setup_resume(None);
+    setup_resume(None, true);
 }
 
 #[test]
 #[ignore = "requires a loopback FIRESTORE_EMULATOR_HOST"]
 fn proxied_setup_retains_cloud_run_authentication() {
-    setup_resume(Some("proxy@example-project.iam.gserviceaccount.com"));
+    setup_resume(Some("proxy@example-project.iam.gserviceaccount.com"), true);
 }
 
-fn setup_resume(proxy_invoker: Option<&str>) {
+fn setup_resume(proxy_invoker: Option<&str>, oauth_enabled: bool) {
     assert!(
         std::env::var("FIRESTORE_EMULATOR_HOST")
             .unwrap()
@@ -237,18 +232,18 @@ fn setup_resume(proxy_invoker: Option<&str>) {
                 .args(["--proxy-invoker", invoker]);
         }
         if attempt == 0 {
-            command
-                .args([
-                    "--region",
-                    "us-central1",
-                    "--endpoint",
-                    "https://fleet.example/custom",
-                    "--image",
-                    &image,
-                    "--oauth-client",
-                ])
-                .arg(&oauth);
-        } else if attempt == 2 {
+            command.args([
+                "--region",
+                "us-central1",
+                "--endpoint",
+                "https://fleet.example/custom",
+                "--image",
+                &image,
+            ]);
+            if oauth_enabled {
+                command.arg("--oauth-client").arg(&oauth);
+            }
+        } else if attempt == 2 && oauth_enabled {
             command.arg("--oauth-client").arg(&oauth);
         }
         let output = capulus::process::CaptureOptions {
@@ -275,7 +270,15 @@ fn setup_resume(proxy_invoker: Option<&str>) {
             .join(format!("{project}.json"));
         let mut receipt_value: Value =
             serde_json::from_slice(&fs::read(&receipt).unwrap()).unwrap();
-        assert_eq!(receipt_value["secret_version"], "1");
+        assert_eq!(
+            receipt_value["secret_version"],
+            if oauth_enabled {
+                json!("1")
+            } else {
+                Value::Null
+            }
+        );
+        assert_eq!(receipt_value["config"]["login"].is_null(), !oauth_enabled);
         assert_eq!(
             receipt_value["completed"],
             json!(["GCP resources", "Identity and certificate authorities"])
@@ -287,5 +290,23 @@ fn setup_resume(proxy_invoker: Option<&str>) {
         }
     }
     let state: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
-    assert_eq!(state["secret_versions"], 1);
+    assert_eq!(state["secret_versions"], u64::from(oauth_enabled));
+    if !oauth_enabled {
+        for call in state["calls"].as_array().unwrap() {
+            assert_ne!(call[0], "secrets");
+            assert!(
+                !call
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("secretmanager.googleapis.com"))
+            );
+            assert!(!call.as_array().unwrap().contains(&json!("--set-secrets")));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires a loopback FIRESTORE_EMULATOR_HOST"]
+fn default_setup_resumes_without_oauth_or_secret_manager() {
+    setup_resume(None, false);
 }

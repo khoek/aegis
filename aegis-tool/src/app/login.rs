@@ -47,6 +47,10 @@ impl<'a> BrowserLogin<'a> {
     }
 
     pub(super) fn run(&self) -> Result<i32> {
+        if let Some(path) = &self.args.credential {
+            import_credential_file(path, self.api_base_override)?;
+            return Ok(0);
+        }
         if let Some(request) = self.args.remote_auth_relay.as_deref() {
             return relay_remote_auth(request, self.args.wait_timeout_secs);
         }
@@ -81,6 +85,58 @@ impl<'a> BrowserLogin<'a> {
     }
 }
 
+pub fn import_credential_file(path: &std::path::Path, api_override: Option<&str>) -> Result<()> {
+    anyhow::ensure!(
+        std::fs::metadata(path)?.len() <= 64 * 1024,
+        "credential file is too large"
+    );
+    let credential: aegis_dto::identity::UserCredential =
+        serde_json::from_slice(&std::fs::read(path)?).context("invalid Aegis user credential")?;
+    credential.validate()?;
+    anyhow::ensure!(
+        api_override.is_none_or(|endpoint| endpoint == credential.api_base),
+        "API override differs from the credential endpoint"
+    );
+    let _lock = crate::locks::user_auth_lock()?;
+    let task = ui::task(TaskOptions {
+        label: "Importing user credential".into(),
+        deadline: Some(Duration::from_secs(30)),
+        ..Default::default()
+    })?;
+    anyhow::ensure!(
+        credential.expires_unix > now_unix(),
+        "credential expired; request a new credential"
+    );
+    let auth = crate::api::exchange_refresh_token(
+        &credential.api_base,
+        &credential.refresh_token,
+        now_unix(),
+    )?;
+    let claims = phylax_core::dangerous::decode_unverified_claims::<phylax_core::AccessClaims>(
+        &auth.access_token,
+    )?;
+    anyhow::ensure!(
+        auth.principal == credential.user_id
+            && claims.sub.strip_kind("user") == Some(&credential.user_id)
+            && claims.iss
+                == aegis_dto::namespace::ApiEndpoint::parse(&credential.api_base)
+                    .map_err(anyhow::Error::msg)?
+                    .service_url()
+            && claims.sid.as_deref() == Some(&credential.session_id),
+        "API returned a different user or session"
+    );
+    persist_user_auth_state(&auth).context("credential exchanged but local session could not be saved; revoke its session and issue a replacement")?;
+    crate::config::UserContext {
+        api_base: credential.api_base,
+    }
+    .persist()
+    .context("user session saved; endpoint configuration could not be saved")?;
+    std::fs::remove_file(path)
+        .context("user session and endpoint saved; remove the imported credential file manually")?;
+    task.finish(format!("Signed in as {}", auth.principal));
+    Ok(())
+}
+
 pub struct BrowserProof {
     pub code: String,
     pub verifier: String,
@@ -108,6 +164,31 @@ impl BrowserProof {
 }
 
 pub fn browser_proof(api_base: &str, remote: bool, timeout: Duration) -> Result<BrowserProof> {
+    let endpoint =
+        aegis_dto::namespace::ApiEndpoint::parse(api_base).map_err(anyhow::Error::msg)?;
+    let checking = ui::task(TaskOptions {
+        label: "Checking sign-in methods".into(),
+        deadline: Some(Duration::from_secs(30)),
+        ..Default::default()
+    })?;
+    let info: serde_json::Value = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .get(format!("{}/info", endpoint.service_url()))
+        .send()?
+        .error_for_status()?
+        .json()?;
+    anyhow::ensure!(
+        info["issuer"] == endpoint.service_url(),
+        "endpoint answered for a different Aegis issuer"
+    );
+    anyhow::ensure!(
+        info["authentication"]["oauth"] == true,
+        "Browser OAuth is not enabled. Ask your administrator for a credential, then run `aegis manage login --credential FILE`"
+    );
+    checking.finish_and_clear();
     ui::require_interactive("Browser sign-in requires an interactive terminal")?;
     let prepare = ui::task(TaskOptions {
         label: "Preparing browser sign-in".into(),

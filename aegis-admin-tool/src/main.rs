@@ -1,6 +1,7 @@
 //! Local GCP administration. No administration credentials travel through the Aegis API.
 mod certificates;
 mod connection;
+mod credentials;
 mod deployment;
 mod gcloud;
 mod hub;
@@ -69,16 +70,27 @@ enum AdminCommand {
     },
     /// Check the deployment, public endpoint, account and hub.
     Doctor(ProjectArgs),
-    /// Authorize the account signing in through the browser.
+    /// Authorize and sign in using local GCP access, or opt into browser OAuth.
     Authorize {
+        #[arg(long, conflicts_with = "user")]
+        oauth: bool,
+        #[arg(long)]
+        user: Option<String>,
         #[command(flatten)]
         project: ProjectArgs,
         #[arg(long)]
         target_namespace: Option<NamespaceId>,
-        #[arg(long, value_enum, default_value = "member")]
-        role: Role,
+        #[arg(long, value_enum)]
+        role: Option<Role>,
         #[arg(long)]
         remote_auth: bool,
+    },
+    /// Issue, inspect, or revoke user credentials.
+    Credential {
+        #[command(flatten)]
+        project: ProjectArgs,
+        #[command(subcommand)]
+        command: credentials::CredentialCommand,
     },
     /// List accounts, change access, or grant namespace membership.
     User {
@@ -124,6 +136,9 @@ impl From<Role> for NamespaceRole {
 
 #[derive(Debug, Subcommand)]
 enum UserCommand {
+    Create {
+        email: String,
+    },
     List,
     Enable {
         user: String,
@@ -163,18 +178,33 @@ fn run(command: AdminCommand) -> Result<i32> {
         }
         AdminCommand::Doctor(args) => Deployment::load(args.project)?.doctor()?,
         AdminCommand::Authorize {
+            oauth,
+            user,
             project,
             target_namespace,
             role,
             remote_auth,
         } => {
             let connection = Connection::load(project.project)?;
-            authorize(
-                &connection,
-                target_namespace.as_ref().unwrap_or(&connection.namespace),
-                role.into(),
-                remote_auth,
-            )?;
+            if oauth {
+                authorize(
+                    &connection,
+                    target_namespace.as_ref().unwrap_or(&connection.namespace),
+                    role.map(Into::into),
+                    remote_auth,
+                )?;
+            } else {
+                ensure!(!remote_auth, "--remote-auth requires --oauth");
+                credentials::authorize_local(
+                    &connection,
+                    target_namespace.as_ref().unwrap_or(&connection.namespace),
+                    role.map(Into::into),
+                    user.as_deref(),
+                )?;
+            }
+        }
+        AdminCommand::Credential { project, command } => {
+            credentials::run(&Connection::load(project.project)?, command)?;
         }
         AdminCommand::User { project, command } => {
             let connection = Connection::load(project.project)?;
@@ -186,6 +216,9 @@ fn run(command: AdminCommand) -> Result<i32> {
             };
             let value = database(label, async {
                 Ok(match command {
+                    UserCommand::Create { email } => {
+                        serde_json::to_value(credentials::create_user(&admin, email).await?)?
+                    }
                     UserCommand::List => serde_json::to_value(admin.users().await?)?,
                     UserCommand::Members { namespace } => admin.members(namespace).await?,
                     UserCommand::Enable { user } => {
@@ -278,18 +311,23 @@ fn database<T>(label: &str, operation: impl Future<Output = Result<T>>) -> Resul
 fn authorize(
     connection: &Connection,
     namespace: &NamespaceId,
-    role: NamespaceRole,
+    role: Option<NamespaceRole>,
     remote: bool,
 ) -> Result<()> {
     let endpoint = aegis_dto::namespace::ApiEndpoint::parse(&connection.endpoint)
         .map_err(anyhow::Error::msg)?
         .with_namespace(namespace.clone())
         .base_url();
-    let proof = login::browser_proof(&endpoint, remote, Duration::from_secs(600))?;
     let admin = connection.open()?;
+    let login = database(
+        "Checking OAuth configuration",
+        identity::load_authentication(&admin.db),
+    )?
+    .oauth
+    .context("OAuth is not enabled; use local credential authorization")?;
+    let proof = login::browser_proof(&endpoint, remote, Duration::from_secs(600))?;
     let user_id = database("Authorizing verified account", async {
         let identities = identity::store(&admin.db)?;
-        let login = identity::load_login(&admin.db).await?;
         let settings = identities.load_config().await?;
         let verified = identities
             .auth_store(&settings, login.login_session_ttl_seconds)?
@@ -326,7 +364,7 @@ fn authorize(
             }
         };
         admin
-            .set_membership(namespace.clone(), &user.id, Some(role))
+            .authorize_membership(namespace.clone(), &user.id, role)
             .await
             .context("Account is retained; namespace membership was not confirmed")?;
         Ok(user.id)

@@ -13,18 +13,19 @@ Capulus supplies CLI reporting and the managed installer. These are ordinary
 crates.io dependencies; development patches are local Cargo configuration.
 
 A deployment has one public service issuer and independent namespace subtrees.
-Browser sign-in verifies the provider subject, then checks the account and current
-namespace membership. Agent credentials are scoped to a host and namespace.
+User credentials establish rotating sessions. Every user request checks its live
+session, account, and namespace membership. Optional browser sign-in verifies the
+provider subject before establishing the same kind of session. Agent credentials are scoped to a host and namespace.
 The public endpoint can be proxied; backend invocation authentication and the
 user's Authorization header serve separate purposes.
 
 Administration writes directly to Firestore using the operator's local GCP access
-token. A PKCE-bound browser proof identifies the account being authorized; only
-GCP-authorized administration can create that grant. The browser code is consumed
-by the ordinary OAuth exchange. There is no public administration or first-owner
+token. It creates accounts and issues hashed, individually revocable credentials.
+For OAuth authorization, a PKCE-bound browser proof identifies the account; the
+browser code is consumed by the ordinary OAuth exchange. There is no public administration or first-owner
 claim endpoint.
 
-OIDC client secrets live outside Firestore. Setup stores them in Secret Manager
+When OAuth is enabled, OIDC client secrets live outside Firestore. Setup stores them in Secret Manager
 and pins the version injected into Cloud Run. API signing and namespace CA keys
 remain in their own database records. Repeating setup never silently replaces
 existing keys or changes an issuer.

@@ -1,4 +1,4 @@
-pub use aegis_dto::identity::LoginConfiguration;
+pub use aegis_dto::identity::{AuthenticationConfiguration, LoginConfiguration};
 use arche_firestore::{Db, load_optional_typed_at};
 use phylax_gcp::identity::{IdentityOptions, IdentityStore};
 
@@ -9,16 +9,16 @@ pub(crate) fn store(db: &Db) -> anyhow::Result<IdentityStore> {
     .validate()?
     .connect(db.clone()))
 }
-pub(crate) async fn load_login(db: &Db) -> anyhow::Result<LoginConfiguration> {
-    let options = load_optional_typed_at::<LoginConfiguration>(
+pub(crate) async fn load_authentication(db: &Db) -> anyhow::Result<AuthenticationConfiguration> {
+    let options = load_optional_typed_at::<AuthenticationConfiguration>(
         db.inner(),
         store(db)?.parent(),
         "settings",
-        "login",
+        "authentication",
     )
     .await?
     .ok_or_else(|| {
-        anyhow::anyhow!("Aegis login configuration is missing; run aegis-admin setup")
+        anyhow::anyhow!("Aegis authentication configuration is missing; run aegis-admin setup")
     })?;
     options.validate()?;
     Ok(options)

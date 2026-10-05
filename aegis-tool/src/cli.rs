@@ -486,6 +486,10 @@ pub struct SyncTlsArgs {
 
 #[derive(Debug, Args)]
 pub struct LoginArgs {
+    /// Import an administrator-issued credential, including its endpoint and namespace.
+    #[arg(long, conflicts_with_all = ["remote_auth", "remote_auth_relay"])]
+    pub credential: Option<PathBuf>,
+
     #[arg(
         long,
         default_value_t = 300,

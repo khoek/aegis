@@ -30,8 +30,8 @@ use hickory_resolver::{
 use oauth2::{
     AuthType, AuthUrl, AuthorizationCode, Client as OAuthClient, ClientId, CsrfToken,
     EndpointNotSet, ExtraTokenFields, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
-    RefreshToken, StandardRevocableToken, StandardTokenIntrospectionResponse,
-    StandardTokenResponse, TokenResponse, TokenUrl,
+    StandardRevocableToken, StandardTokenIntrospectionResponse, StandardTokenResponse,
+    TokenResponse, TokenUrl,
     basic::{BasicErrorResponse, BasicRevocationErrorResponse, BasicTokenType},
 };
 use phylax_core::{AccessClaims, dangerous::decode_unverified_claims, oauth};
@@ -1205,6 +1205,7 @@ impl AuthenticatedApiClient {
                 "aegis user auth is missing; run `aegis manage login` with an authorized user principal"
             )
         })?;
+        validate_auth_endpoint(&api_base, &auth_state)?;
         let now = now_unix();
         if auth_state.access_needs_refresh(now, ACCESS_TOKEN_REFRESH_SKEW_SECONDS) {
             auth_state = refresh_auth_state(&api_base, &auth_state, now)?;
@@ -1711,38 +1712,47 @@ fn auth_state_from_token_response(response: AegisTokenResponse, now: i64) -> Res
 
 fn validate_user_auth_state(auth_state: &UserAuthState) -> Result<()> {
     crate::principal_grants::validate_user_id(&auth_state.principal)
-        .context("stored oauth principal is not a stable aegis user ID")?;
+        .context("stored user principal is not a stable aegis user ID")?;
     Ok(())
 }
 
-fn exchange_refresh_token(api_base: &str, refresh_token: &str, now: i64) -> Result<UserAuthState> {
-    let auth_url = AuthUrl::new(format!(
-        "{}{}",
-        aegis_dto::namespace::ApiEndpoint::parse(api_base)
-            .map_err(anyhow::Error::msg)?
-            .service_url(),
-        oauth::path::OAUTH_AUTHORIZE
-    ))
-    .context("invalid oauth authorization endpoint")?;
-    let token_url = TokenUrl::new(format!(
-        "{}{}",
-        aegis_dto::namespace::ApiEndpoint::parse(api_base)
-            .map_err(anyhow::Error::msg)?
-            .service_url(),
-        oauth::path::OAUTH_TOKEN
-    ))
-    .context("invalid oauth token endpoint")?;
-    let oauth = AegisOauthClient::new(ClientId::new(AEGIS_TOOL_CLIENT_ID.to_string()))
-        .set_auth_uri(auth_url)
-        .set_token_uri(token_url)
-        .set_auth_type(AuthType::RequestBody);
-
-    let http = oauth_http_client()?;
-    let response = oauth
-        .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-        .request(&http)
-        .context("failed to refresh oauth access token")?;
+pub(crate) fn exchange_refresh_token(
+    api_base: &str,
+    refresh_token: &str,
+    now: i64,
+) -> Result<UserAuthState> {
+    let endpoint =
+        aegis_dto::namespace::ApiEndpoint::parse(api_base).map_err(anyhow::Error::msg)?;
+    let response = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!(
+            "{}{}",
+            endpoint.service_url(),
+            aegis_dto::identity::USER_TOKEN_PATH
+        ))
+        .json(&serde_json::json!({"grant_type":"refresh_token", "refresh_token":refresh_token}))
+        .send()
+        .context("failed to exchange user credential")?
+        .error_for_status()
+        .context("user credential expired, revoked, or already imported")?
+        .json()
+        .context("invalid user token response")?;
     auth_state_from_token_response(response, now)
+}
+
+fn validate_auth_endpoint(api_base: &str, state: &UserAuthState) -> Result<()> {
+    let endpoint =
+        aegis_dto::namespace::ApiEndpoint::parse(api_base).map_err(anyhow::Error::msg)?;
+    let claims = decode_unverified_claims::<AccessClaims>(&state.access_token)?;
+    anyhow::ensure!(
+        claims.iss == endpoint.service_url()
+            && claims.sub.strip_kind("user") == Some(&state.principal),
+        "Saved user session belongs to another deployment or account; sign in to the selected deployment first"
+    );
+    Ok(())
 }
 
 pub(crate) fn refresh_auth_state(
@@ -1750,8 +1760,9 @@ pub(crate) fn refresh_auth_state(
     current: &UserAuthState,
     now: i64,
 ) -> Result<UserAuthState> {
+    validate_auth_endpoint(api_base, current)?;
     if current.refresh_is_expired(now) {
-        bail!("OAuth state expired; run `aegis manage login` again");
+        bail!("User session expired; run `aegis manage login` again");
     }
     exchange_refresh_token(api_base, &current.refresh_token, now)
 }
@@ -2338,7 +2349,7 @@ mod tests {
             spawn_mock_server(1, move |index, request| match index {
                 0 => {
                     assert_eq!("POST", request.method);
-                    assert_eq!(phylax_core::oauth::path::OAUTH_TOKEN, request.path);
+                    assert_eq!(aegis_dto::identity::USER_TOKEN_PATH, request.path);
                     assert_eq!(None, request.authorization);
                     MockResponse::json(serde_json::json!({
                         "access_token": renewed_access_for_server,
@@ -2352,6 +2363,18 @@ mod tests {
                 _ => unreachable!("unexpected request"),
             });
         let expired_access = unsigned_user_access_token_with("expired-jti", 999, false);
+        let mut claims =
+            phylax_core::dangerous::decode_unverified_claims::<AccessClaims>(&expired_access)
+                .unwrap();
+        claims.iss = aegis_dto::namespace::ApiEndpoint::parse(&base_url)
+            .unwrap()
+            .service_url()
+            .to_owned();
+        let expired_access = format!(
+            "{}.{}.sig",
+            expired_access.split('.').next().unwrap(),
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap())
+        );
         let expired_state = UserAuthState {
             access_token: expired_access.clone(),
             refresh_token: "initial-refresh".to_string(),

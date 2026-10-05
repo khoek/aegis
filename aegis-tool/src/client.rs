@@ -7,7 +7,7 @@ pub use crate::config::{UserContext, app_dir, now_unix};
 pub use crate::locks::{deployment_lock, local_system_lock};
 
 pub mod login {
-    pub use crate::app::login::{BrowserProof, browser_proof};
+    pub use crate::app::login::{BrowserProof, browser_proof, import_credential_file};
 }
 
 pub mod enrollment {

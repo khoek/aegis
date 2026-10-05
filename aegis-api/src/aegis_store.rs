@@ -390,6 +390,12 @@ pub(crate) enum AegisEnrollmentWriteError {
 
 #[async_trait::async_trait]
 pub(crate) trait AegisStore {
+    async fn user_session_active(
+        &self,
+        claims: &phylax_core::AccessClaims,
+        now: i64,
+    ) -> anyhow::Result<bool>;
+
     async fn fetch_aegis_user_by_id(
         &self,
         user_id: &str,

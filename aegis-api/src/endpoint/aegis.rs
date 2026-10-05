@@ -791,6 +791,14 @@ mod tests_refactor {
 
     #[async_trait::async_trait]
     impl AegisStore for MemoryStore {
+        async fn user_session_active(
+            &self,
+            claims: &phylax_core::AccessClaims,
+            _: i64,
+        ) -> anyhow::Result<bool> {
+            Ok(claims.sid.as_deref() == Some("test-user-session"))
+        }
+
         async fn fetch_aegis_user_by_id(
             &self,
             user_id: &str,
@@ -4593,6 +4601,16 @@ impl UserBearer {
             .map_err(|_| ApiError::Forbidden("stable user subject required".into()))?;
         require_client_binding(&claims, AEGIS_TOOL_CLIENT_ID)?;
         require_scope(&claims, AEGIS_USER_SCOPE)?;
+        if !state
+            .store
+            .user_session_active(&claims, OffsetDateTime::now_utc().unix_timestamp())
+            .await?
+        {
+            return Err(ApiError::Unauthorized(
+                "user session expired or revoked".into(),
+            ));
+        }
+
         let user = resolve_active_aegis_user(&state.store, user_id)
             .await?
             .ok_or_else(|| ApiError::Forbidden("namespace membership required".into()))?;

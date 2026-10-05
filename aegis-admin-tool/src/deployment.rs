@@ -1,4 +1,10 @@
-use std::{fs, io::Write, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Write,
+    path::PathBuf,
+    time::Duration,
+};
 
 use aegis_dto::{NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint};
 use anyhow::{Context, Result, bail, ensure};
@@ -26,7 +32,10 @@ pub(super) struct SetupArgs {
     /// Service account allowed to invoke a private backend through your proxy.
     #[arg(long)]
     proxy_invoker: Option<String>,
-    /// Downloaded Google OAuth web application client JSON.
+    /// Enable browser sign-in and guide Google OAuth configuration.
+    #[arg(long)]
+    oauth: bool,
+    /// Downloaded Google OAuth web application client JSON; enables OAuth.
     #[arg(long)]
     oauth_client: Option<PathBuf>,
     #[arg(long)]
@@ -34,12 +43,15 @@ pub(super) struct SetupArgs {
     /// Exact API image (@sha256:…). Defaults to this release's official image.
     #[arg(long)]
     image: Option<String>,
-    /// Skip enrolling this computer; the API, owner and first hub are still configured.
+    /// Desired hub regions. Repeat to keep multiple hubs; defaults to an interactive selector.
+    #[arg(long = "hub-region")]
+    hub_regions: Vec<String>,
+    /// Skip enrolling this computer; the API, owner and hubs are still configured.
     #[arg(long)]
     no_enroll: bool,
     #[arg(long)]
     remote_auth: bool,
-    /// Accept the displayed resource plan. Browser authorization remains interactive.
+    /// Accept the displayed resource plan. OAuth authorization, when enabled, remains interactive.
     #[arg(long, short = 'y')]
     yes: bool,
 }
@@ -53,7 +65,7 @@ pub(super) struct DeploymentConfig {
     pub namespace: NamespaceId,
     backend: String,
     proxy_invoker: Option<String>,
-    login: LoginConfiguration,
+    login: Option<LoginConfiguration>,
 }
 
 impl DeploymentConfig {
@@ -115,7 +127,8 @@ pub(super) struct Deployment {
     image: String,
     secret_version: Option<String>,
     completed: Vec<String>,
-    pub(super) hub: Option<aegis_dto::HostId>,
+    pub(super) hubs: BTreeMap<String, super::hub::Hub>,
+    pub(super) hub_regions: BTreeSet<String>,
     local_host: Option<aegis_dto::HostId>,
 }
 
@@ -139,7 +152,7 @@ pub(super) struct ConfigureArgs {
     #[arg(long)]
     endpoint: String,
     #[arg(long)]
-    oauth_client: PathBuf,
+    oauth_client: Option<PathBuf>,
     #[arg(long, default_value = "personal")]
     initial_namespace: NamespaceId,
 }
@@ -154,11 +167,14 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
     } = args;
     let project = project(project_arg)?;
     let _lock = aegis_tool::client::deployment_lock(&project)?;
-    let oauth = GoogleWebClient::read(&oauth_client, &endpoint)?;
+    let oauth = oauth_client
+        .as_ref()
+        .map(|path| GoogleWebClient::read(path, &endpoint))
+        .transpose()?;
     let setup = store::SetupOptions {
         issuer_url: endpoint.clone(),
         audience: endpoint.clone(),
-        login: oauth.login(&endpoint),
+        login: oauth.as_ref().map(|oauth| oauth.login(&endpoint)),
     }
     .validate()?;
     let options = store::AdminOptions {
@@ -188,8 +204,13 @@ pub(super) fn configure_external(args: ConfigureArgs) -> Result<()> {
     }
     .persist()?;
     ui::success(
-        "API configuration and administration connection saved. Supply the OAuth web client's secret as AEGIS_OIDC_CLIENT_SECRET to your API runtime, then run `aegis-admin authorize --role admin` after starting it.",
+        "API configuration and administration connection saved. Start the API, then run `aegis-admin authorize --role admin`.",
     );
+    if oauth.is_some() {
+        ui::detail(
+            "Supply AEGIS_OIDC_CLIENT_SECRET to the API runtime; use `authorize --oauth` for browser sign-in.",
+        );
+    }
     Ok(())
 }
 
@@ -279,9 +300,14 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
                 }
             }
         };
-        let oauth = read_oauth_client(args.oauth_client.as_ref(), &project, &endpoint)?;
-        let login = oauth.login(&endpoint);
-        client_secret = Some(oauth.client_secret);
+        let login = if args.oauth || args.oauth_client.is_some() {
+            let oauth = read_oauth_client(args.oauth_client.as_ref(), &project, &endpoint)?;
+            let login = oauth.login(&endpoint);
+            client_secret = Some(oauth.client_secret);
+            Some(login)
+        } else {
+            None
+        };
         let config = DeploymentConfig {
             project,
             region,
@@ -300,28 +326,48 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
             None => official_image()?,
         };
         Deployment {
-            config,
             image,
             secret_version: None,
             completed: Vec::new(),
-            hub: None,
+            hub_regions: BTreeSet::from([config.region.clone()]),
+            hubs: BTreeMap::new(),
             local_host: None,
+            config,
         }
     };
-    if deployment.secret_version.is_none() && client_secret.is_none() {
+    for region in &args.hub_regions {
+        ensure!(valid_region(region), "invalid hub region: {region}");
+    }
+    ensure!(
+        !(args.oauth || args.oauth_client.is_some()) || deployment.config.login.is_some(),
+        "saved deployment uses credentials only; OAuth must be enabled through an explicit configuration change"
+    );
+    ensure!(
+        !args.remote_auth || deployment.config.login.is_some(),
+        "--remote-auth requires OAuth"
+    );
+    if deployment.config.login.is_some()
+        && deployment.secret_version.is_none()
+        && client_secret.is_none()
+    {
         let oauth = read_oauth_client(
             args.oauth_client.as_ref(),
             &deployment.config.project,
             &deployment.config.endpoint,
         )?;
         ensure!(
-            oauth.client_id == deployment.config.login.client_id,
+            Some(&oauth.client_id)
+                == deployment
+                    .config
+                    .login
+                    .as_ref()
+                    .map(|login| &login.client_id),
             "OAuth client differs from saved deployment"
         );
         client_secret = Some(oauth.client_secret);
     }
     ui::stage(&format!(
-        "Project: {}\nRegion: {}\nEndpoint: {}\nNamespace: {}\nImage: {}\nResources: Firestore, Cloud Run, Secret Manager and one Ubuntu hub VM{}",
+        "Project: {}\nRegion: {}\nEndpoint: {}\nNamespace: {}\nImage: {}\nResources: Firestore, Cloud Run and regional Ubuntu hub VMs{}",
         deployment.config.project,
         deployment.config.region,
         deployment.config.endpoint,
@@ -333,6 +379,11 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
             "; then enroll this computer"
         }
     ));
+    ui::detail(if deployment.config.login.is_some() {
+        "Authentication: browser OAuth (Secret Manager enabled)"
+    } else {
+        "Authentication: administrator-issued credentials"
+    });
     if !args.yes {
         ui::require_interactive("Use --yes to accept the setup plan without a terminal")?;
         let accepted = ui::suspend(|| {
@@ -349,7 +400,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         aegis_tool::client::enrollment::check_local_enrollment_platform()?;
     }
     deployment.persist()?;
-    let result = deployment.setup_steps(client_secret.as_deref(), args.no_enroll, args.remote_auth);
+    let result = deployment.setup_steps(client_secret.as_deref(), &args);
     if let Err(error) = result {
         ui::warn(&format!(
             "Setup stopped. Completed phases: {}. Resources and keys are retained. Resume with `aegis-admin setup --project {}`. Receipt: {}",
@@ -382,6 +433,7 @@ impl Deployment {
         );
         deployment.config = deployment.config.validate()?;
         validate_image(&deployment.image)?;
+        super::hub::validate(&deployment)?;
         if let Some(version) = &deployment.secret_version {
             ensure!(
                 !version.is_empty() && version.bytes().all(|c| c.is_ascii_digit()),
@@ -394,7 +446,7 @@ impl Deployment {
     pub(super) fn cloud(&self) -> Result<Gcloud> {
         Gcloud::new(self.config.project.clone())
     }
-    fn persist(&self) -> Result<()> {
+    pub(super) fn persist(&self) -> Result<()> {
         capulus::store::atomic_write(
             &receipt_path(&self.config.project)?,
             &serde_json::to_vec_pretty(self)?,
@@ -422,7 +474,7 @@ impl Deployment {
             .connect(token),
         )
     }
-    fn setup_steps(&mut self, secret: Option<&str>, no_enroll: bool, remote: bool) -> Result<()> {
+    fn setup_steps(&mut self, secret: Option<&str>, args: &SetupArgs) -> Result<()> {
         self.provision(secret)?;
         self.complete("GCP resources")?;
         let admin = self.connect()?;
@@ -457,12 +509,16 @@ impl Deployment {
             .iter()
             .any(|phase| phase == "Owner authorization")
         {
-            self.authorize(&self.config.namespace, NamespaceRole::Admin, remote)?;
+            self.authorize(
+                &self.config.namespace,
+                NamespaceRole::Admin,
+                args.remote_auth,
+            )?;
             self.complete("Owner authorization")?;
         }
-        super::hub::ensure(self)?;
-        self.complete("First hub")?;
-        if !no_enroll {
+        super::hub::configure(self, &args.hub_regions, args.yes)?;
+        self.complete("Regional hubs")?;
+        if !args.no_enroll {
             self.enroll_current_machine()?;
             self.complete("Current machine")?;
         }
@@ -516,7 +572,6 @@ impl Deployment {
             "enable",
             "run.googleapis.com",
             "firestore.googleapis.com",
-            "secretmanager.googleapis.com",
             "compute.googleapis.com",
             "iam.googleapis.com",
         ])?;
@@ -593,6 +648,10 @@ impl Deployment {
         cloud.json(&["projects", "add-iam-policy-binding", &self.config.project,
             "--member", &format!("serviceAccount:{email}"), "--role=roles/datastore.user",
             "--condition", &format!("expression=resource.name==\"projects/{}/databases/{DATABASE}\",title=aegis-database", self.config.project)])?;
+        if self.config.login.is_none() {
+            return Ok(());
+        }
+        cloud.json(&["services", "enable", "secretmanager.googleapis.com"])?;
         let secrets = cloud.json(&["secrets", "list"])?;
         if let Some(existing) = array(&secrets)?.iter().find(|s| {
             s["name"]
@@ -677,10 +736,10 @@ impl Deployment {
     }
     pub fn deploy(&mut self, image: &str) -> Result<()> {
         validate_image(image)?;
-        let version = self
-            .secret_version
-            .as_deref()
-            .context("Complete setup before deploying the API")?;
+        ensure!(
+            self.config.login.is_none() || self.secret_version.is_some(),
+            "Complete OAuth secret setup before deploying the API"
+        );
         let cloud = self.cloud()?;
         let services = cloud.json(&["run", "services", "list", "--region", &self.config.region])?;
         let existing = array(&services)?
@@ -699,7 +758,10 @@ impl Deployment {
         )?;
         env.flush()?;
         let account = self.runtime_account();
-        let secret = format!("AEGIS_OIDC_CLIENT_SECRET={SECRET}:{version}");
+        let secret = self
+            .secret_version
+            .as_ref()
+            .map(|version| format!("AEGIS_OIDC_CLIENT_SECRET={SECRET}:{version}"));
         let mut args = vec![
             "run",
             "deploy",
@@ -712,8 +774,6 @@ impl Deployment {
             &account,
             "--env-vars-file",
             env.path().to_str().context("invalid temporary file path")?,
-            "--set-secrets",
-            &secret,
             "--labels",
             OWNER_LABEL,
             "--port=8080",
@@ -730,6 +790,11 @@ impl Deployment {
                 "--no-invoker-iam-check"
             },
         ];
+        if let Some(secret) = &secret {
+            args.extend(["--set-secrets", secret]);
+        } else {
+            args.push("--clear-secrets");
+        }
         if existing.is_some() {
             args.push("--no-traffic");
         }
@@ -777,7 +842,11 @@ impl Deployment {
         role: NamespaceRole,
         remote: bool,
     ) -> Result<()> {
-        super::authorize(&self.connection(), namespace, role, remote)
+        if self.config.login.is_some() {
+            super::authorize(&self.connection(), namespace, Some(role), remote)
+        } else {
+            super::credentials::authorize_local(&self.connection(), namespace, Some(role), None)
+        }
     }
     pub(super) fn namespace_endpoint(&self) -> Result<String> {
         Ok(ApiEndpoint::parse(&self.config.endpoint)
@@ -853,19 +922,15 @@ impl Deployment {
                 .any(|c| c["type"] == "Ready" && c["status"] == "True"),
             "Cloud Run service is not ready"
         );
-        super::hub::check(self, &mut api)?;
+        super::hub::check_all(self, &mut api)?;
         println!(
             "{}",
             serde_json::to_string_pretty(
                 &json!({"project":self.config.project,"endpoint":self.config.endpoint,
-            "namespace":membership.namespace,"role":membership.role,"hub":self.hub,"image":self.image,"ready":true})
+            "namespace":membership.namespace,"role":membership.role,"hubs":self.hubs,"image":self.image,"ready":true})
             )?
         );
         Ok(())
-    }
-    pub(super) fn save_hub(&mut self, id: aegis_dto::HostId) -> Result<()> {
-        self.hub = Some(id);
-        self.persist()
     }
 }
 
@@ -972,7 +1037,7 @@ fn region_for_timezone(zone: &str) -> &'static str {
         _ => "us-central1",
     }
 }
-fn valid_region(value: &str) -> bool {
+pub(super) fn valid_region(value: &str) -> bool {
     value.len() <= 40
         && value.contains('-')
         && value.ends_with(|c: char| c.is_ascii_digit())

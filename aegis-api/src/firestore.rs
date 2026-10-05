@@ -1785,6 +1785,16 @@ async fn update_host_aliases(
 
 #[async_trait::async_trait]
 impl AegisStore for AegisDb {
+    async fn user_session_active(
+        &self,
+        claims: &phylax_core::AccessClaims,
+        now: i64,
+    ) -> anyhow::Result<bool> {
+        crate::identity::store(&self.db)?
+            .session_active(claims, now)
+            .await
+    }
+
     async fn fetch_aegis_user_by_id(
         &self,
         user_id: &str,

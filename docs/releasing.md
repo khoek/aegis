@@ -38,7 +38,7 @@ Tests requiring Firestore use a loopback emulator, never a production project:
 ```sh
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-admin-tool emulator -- --ignored
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-admin-tool --test setup -- --include-ignored
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-api namespace_subtrees -- --ignored
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-api -- --ignored
 ```
 
 Fleet upgrades remain a separate operator action. Retire temporary transition
