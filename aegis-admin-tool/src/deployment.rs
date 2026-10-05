@@ -404,6 +404,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
                     "Create or resume this deployment? GCP usage is billed to your project",
                 )
                 .default(true)
+                .wait_for_newline(true)
                 .interact()
         })?;
         ensure!(accepted, "Setup declined; no resources were changed");

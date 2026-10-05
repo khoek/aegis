@@ -155,6 +155,7 @@ pub(super) fn configure(
             dialoguer::Confirm::new()
                 .with_prompt("Apply these hub changes?")
                 .default(removals.is_empty())
+                .wait_for_newline(true)
                 .interact()
         })?;
         ensure!(
