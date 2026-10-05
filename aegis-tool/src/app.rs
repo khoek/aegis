@@ -815,16 +815,13 @@ fn run_enroll(api_base_override: Option<&str>, args: &EnrollArgs) -> Result<i32>
             let mut api = AuthenticatedApiClient::load(Some(&base))?;
             let alias = match &args.name {
                 Some(alias) => alias.clone(),
-                None => {
-                    let name = match &plan.target {
-                        EnrollTarget::Local(_) => {
-                            fs::read_to_string("/etc/hostname")?.trim().to_owned()
-                        }
-                        EnrollTarget::Remote(remote) => remote.host.clone(),
-                    };
-                    HostAlias::parse(name.split('.').next().unwrap_or(&name))
-                        .context("machine name is not a valid alias; specify --name")?
-                }
+                None => match &plan.target {
+                    EnrollTarget::Local(_) => local_machine_alias()?,
+                    EnrollTarget::Remote(remote) => {
+                        HostAlias::parse(remote.host.split('.').next().unwrap_or(&remote.host))
+                            .context("machine name is not a valid alias; specify --name")?
+                    }
+                },
             };
             let enrollment = crate::invitation::reserve(&mut api, alias, AegisHostMode::Leaf)?;
             crate::invitation::issue(&mut api, &enrollment.host_id)?
@@ -1419,6 +1416,16 @@ pub fn check_local_enrollment_platform() -> Result<()> {
         "local enrollment requires Ubuntu running systemd; use --no-enroll on an operator-only computer"
     );
     Ok(())
+}
+
+pub fn local_machine_alias() -> Result<HostAlias> {
+    let system = rustix::system::uname();
+    let hostname = system
+        .nodename()
+        .to_str()
+        .context("system hostname is not UTF-8")?;
+    HostAlias::parse(hostname.split('.').next().unwrap_or(hostname))
+        .context("system hostname is not a valid Aegis alias")
 }
 
 pub fn local_machine_ready(api_base: &str, expected: Option<&aegis_dto::HostId>) -> Result<bool> {

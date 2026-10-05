@@ -3,7 +3,7 @@ resolver = "3"
 members = ["aegis-dto", "aegis-api", "aegis-tool", "aegis-admin-tool"]
 
 [workspace.package]
-version = "0.3.4"
+version = "0.3.5"
 authors = ["Keeley Hoek <keeley@hoek.io>"]
 edition = "2024"
 license = "AGPL-3.0-only"

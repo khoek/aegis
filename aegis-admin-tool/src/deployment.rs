@@ -549,9 +549,7 @@ impl Deployment {
         let host = match self.local_host {
             Some(host) => host,
             None => {
-                let name = fs::read_to_string("/etc/hostname")?;
-                let alias =
-                    aegis_dto::HostAlias::parse(name.trim().split('.').next().unwrap_or_default())?;
+                let alias = aegis_tool::client::enrollment::local_machine_alias()?;
                 let enrollment = aegis_tool::client::enrollment::reserve(
                     &mut api,
                     alias,

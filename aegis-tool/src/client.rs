@@ -15,7 +15,8 @@ pub mod enrollment {
         system_agent_activation_script, system_program_bootstrap_script,
     };
     pub use crate::app::{
-        check_local_enrollment_platform, enroll_local_machine, local_machine_ready,
+        check_local_enrollment_platform, enroll_local_machine, local_machine_alias,
+        local_machine_ready,
     };
     pub use crate::invitation::{issue, path, read, reserve};
 }
