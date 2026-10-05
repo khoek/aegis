@@ -248,6 +248,19 @@ impl GoogleWebClient {
 pub(super) fn setup(args: SetupArgs) -> Result<()> {
     let project = project(args.project.clone())?;
     let _lock = aegis_tool::client::deployment_lock(&project)?;
+    if let Some(region) = &args.region {
+        ensure!(valid_region(region), "invalid GCP region");
+    }
+    for region in &args.hub_regions {
+        ensure!(valid_region(region), "invalid hub region: {region}");
+    }
+    ui::stage("Preparing GCP management APIs");
+    Gcloud::new(project.clone())?.json(&[
+        "services",
+        "enable",
+        "serviceusage.googleapis.com",
+        "cloudresourcemanager.googleapis.com",
+    ])?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
     let mut deployment = if path.exists() {
@@ -335,9 +348,6 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
             config,
         }
     };
-    for region in &args.hub_regions {
-        ensure!(valid_region(region), "invalid hub region: {region}");
-    }
     ensure!(
         !(args.oauth || args.oauth_client.is_some()) || deployment.config.login.is_some(),
         "saved deployment uses credentials only; OAuth must be enabled through an explicit configuration change"
