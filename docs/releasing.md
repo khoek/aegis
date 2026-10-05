@@ -1,6 +1,6 @@
 # Releasing
 
-Publish the shared dependencies first: Capulus 0.6.10 and the five Rete crates.
+Publish the shared dependencies first: Capulus 0.6.11 and the five Rete crates.
 Rete's order is `phylax-core`, `phylax-oidc`, `arche-firestore`, `phylax-gcp`,
 then `arche-web`. The Aegis workspace deliberately uses path dependencies only
 within its own workspace; local development patches stay in ignored `.cargo/`.
