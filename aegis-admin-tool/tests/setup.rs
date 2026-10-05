@@ -274,6 +274,19 @@ fn setup_resume(proxy_invoker: Option<&str>, oauth_enabled: bool) {
             output.stderr
         );
         assert!(output.stderr.contains("Resources and keys are retained"));
+        if attempt == 0 {
+            assert!(
+                output.stderr.contains("GCP still reports SERVICE_DISABLED"),
+                "{}",
+                output.stderr
+            );
+            assert!(
+                output.stderr.contains("IAM access is not yet usable"),
+                "{}",
+                output.stderr
+            );
+        }
+        assert!(output.stderr.contains("API runtime access verified"));
         assert!(!output.stderr.contains("test-secret-never-log"));
         assert!(!output.stderr.contains('\x1b'));
         assert!(output.stdout.is_empty(), "{}", output.stdout);
@@ -304,6 +317,17 @@ fn setup_resume(proxy_invoker: Option<&str>, oauth_enabled: bool) {
     }
     let state: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
     assert_eq!(state["secret_versions"], u64::from(oauth_enabled));
+    let calls = state["calls"].as_array().unwrap();
+    assert!(calls.iter().any(|call| {
+        call[0] == "iam"
+            && call[1] == "service-accounts"
+            && call[2] == "add-iam-policy-binding"
+            && call[3] == format!("aegis-api@{project}.iam.gserviceaccount.com")
+            && call
+                .as_array()
+                .unwrap()
+                .contains(&json!("--role=roles/iam.serviceAccountTokenCreator"))
+    }));
     if !oauth_enabled {
         for call in state["calls"].as_array().unwrap() {
             assert_ne!(call[0], "secrets");

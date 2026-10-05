@@ -28,7 +28,10 @@ configuration remain under your control.
 
 Setup records progress in `~/.aegis/deployments/PROJECT.json`. Failures retain
 resources, keys, and committed account changes. Rerun the same command to resume;
-it rejects conflicting configuration. `aegis-admin doctor` checks the saved
+it rejects conflicting configuration. Setup waits for API activation and verifies
+database access using the API's runtime identity before deployment. It grants the
+GCP operator impersonation of that dedicated service account for this check.
+`aegis-admin doctor` checks the saved
 installation. `aegis-admin deploy --image IMAGE@sha256:DIGEST` deploys a ready
 revision before switching traffic.
 

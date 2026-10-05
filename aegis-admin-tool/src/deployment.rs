@@ -3,7 +3,7 @@ use std::{
     fs,
     io::Write,
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use aegis_dto::{NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint};
@@ -261,6 +261,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         "serviceusage.googleapis.com",
         "cloudresourcemanager.googleapis.com",
         "cloudbilling.googleapis.com",
+        "iamcredentials.googleapis.com",
     ])?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
@@ -294,7 +295,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         deployment
     } else {
         let cloud = Gcloud::new(project.clone())?;
-        let description = cloud.json(&["projects", "describe", &project])?;
+        let description = cloud.ready_json(&["projects", "describe", &project])?;
         let number = text(&description, "projectNumber")?;
         let region = args.region.clone().unwrap_or_else(suggest_region);
         ensure!(valid_region(&region), "invalid GCP region");
@@ -513,6 +514,7 @@ impl Deployment {
         })?;
         self.connection().persist()?;
         self.complete("Identity and certificate authorities")?;
+        self.wait_runtime_access()?;
         self.deploy(&self.image.clone())?;
         self.check_endpoint()?;
         if !self
@@ -573,7 +575,8 @@ impl Deployment {
     }
     fn provision(&mut self, secret: Option<&str>) -> Result<()> {
         let cloud = self.cloud()?;
-        let billing = cloud.json(&["billing", "projects", "describe", &self.config.project])?;
+        let billing =
+            cloud.ready_json(&["billing", "projects", "describe", &self.config.project])?;
         ensure!(
             billing["billingEnabled"] == true,
             "Enable billing for this GCP project before setup"
@@ -586,7 +589,7 @@ impl Deployment {
             "compute.googleapis.com",
             "iam.googleapis.com",
         ])?;
-        let databases = cloud.json(&["firestore", "databases", "list"])?;
+        let databases = cloud.ready_json(&["firestore", "databases", "list"])?;
         let db_name = format!("projects/{}/databases/{DATABASE}", self.config.project);
         if let Some(db) = array(&databases)?.iter().find(|db| db["name"] == db_name) {
             ensure!(
@@ -643,7 +646,7 @@ impl Deployment {
             }
         }
         let email = self.runtime_account();
-        let accounts = cloud.json(&["iam", "service-accounts", "list"])?;
+        let accounts = cloud.ready_json(&["iam", "service-accounts", "list"])?;
         if !array(&accounts)?
             .iter()
             .any(|account| account["email"] == email)
@@ -659,11 +662,21 @@ impl Deployment {
         cloud.json(&["projects", "add-iam-policy-binding", &self.config.project,
             "--member", &format!("serviceAccount:{email}"), "--role=roles/datastore.user",
             "--condition", &format!("expression=resource.name==\"projects/{}/databases/{DATABASE}\",title=aegis-database", self.config.project)])?;
+        cloud.json(&[
+            "iam",
+            "service-accounts",
+            "add-iam-policy-binding",
+            &email,
+            "--member",
+            &cloud.operator_member()?,
+            "--role=roles/iam.serviceAccountTokenCreator",
+            "--condition=None",
+        ])?;
         if self.config.login.is_none() {
             return Ok(());
         }
         cloud.json(&["services", "enable", "secretmanager.googleapis.com"])?;
-        let secrets = cloud.json(&["secrets", "list"])?;
+        let secrets = cloud.ready_json(&["secrets", "list"])?;
         if let Some(existing) = array(&secrets)?.iter().find(|s| {
             s["name"]
                 .as_str()
@@ -745,6 +758,73 @@ impl Deployment {
     fn runtime_account(&self) -> String {
         format!("{SERVICE}@{}.iam.gserviceaccount.com", self.config.project)
     }
+    fn wait_runtime_access(&self) -> Result<()> {
+        let timeout = Duration::from_secs(8 * 60);
+        let deadline = Instant::now() + timeout;
+        let cloud = self.cloud()?;
+        let account = self.runtime_account();
+        let task = ui::task(ui::TaskOptions {
+            label: "Verifying API runtime access".into(),
+            deadline: Some(timeout),
+            ..Default::default()
+        })?;
+        loop {
+            ui::check_cancelled()?;
+            ensure!(
+                Instant::now() < deadline,
+                "API runtime access is still denied after eight minutes; inspect its IAM bindings, then rerun setup. Resources and keys are retained"
+            );
+            let remaining = || deadline.saturating_duration_since(Instant::now());
+            let result = (|| -> Result<()> {
+                let token =
+                    cloud.token_as(Some(&account), remaining().min(Duration::from_secs(30)))?;
+                super::database_with_timeout(
+                    "Checking Firestore as the API runtime",
+                    async {
+                        let runtime = store::AdminOptions {
+                            project_id: self.config.project.clone(),
+                            database_id: DATABASE.into(),
+                        }
+                        .validate()?
+                        .connect(token)
+                        .await?;
+                        super::identity::store(&runtime.db)?.load_config().await?;
+                        Ok(())
+                    },
+                    remaining().min(Duration::from_secs(30)),
+                )?;
+                if let Some(version) = &self.secret_version {
+                    cloud.run(
+                        &[
+                            "secrets",
+                            "versions",
+                            "access",
+                            version,
+                            "--secret",
+                            SECRET,
+                            "--impersonate-service-account",
+                            &account,
+                        ],
+                        None,
+                        remaining().min(Duration::from_secs(30)),
+                    )?;
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    task.finish("API runtime access verified");
+                    return Ok(());
+                }
+                Err(error) if runtime_access_pending(&error) => {
+                    task.set_phase("IAM access is not yet usable; waiting for propagation");
+                    ui::sleep(Duration::from_secs(5).min(remaining()))?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     pub fn deploy(&mut self, image: &str) -> Result<()> {
         validate_image(image)?;
         ensure!(
@@ -752,7 +832,8 @@ impl Deployment {
             "Complete OAuth secret setup before deploying the API"
         );
         let cloud = self.cloud()?;
-        let services = cloud.json(&["run", "services", "list", "--region", &self.config.region])?;
+        let services =
+            cloud.ready_json(&["run", "services", "list", "--region", &self.config.region])?;
         let existing = array(&services)?
             .iter()
             .find(|s| s["metadata"]["name"] == SERVICE);
@@ -943,6 +1024,17 @@ impl Deployment {
         );
         Ok(())
     }
+}
+
+fn runtime_access_pending(error: &anyhow::Error) -> bool {
+    if capulus::error_is_cancelled(error) {
+        return false;
+    }
+    error.chain().any(|cause| matches!(
+        cause.downcast_ref::<firestore::errors::FirestoreError>(),
+        Some(firestore::errors::FirestoreError::DatabaseError(error)) if error.public.code == "PermissionDenied"
+    )) || ["PERMISSION_DENIED", "iam.serviceAccounts.getAccessToken", "reason: SERVICE_DISABLED"]
+        .iter().any(|code| error.to_string().contains(code))
 }
 
 fn project(value: Option<String>) -> Result<String> {

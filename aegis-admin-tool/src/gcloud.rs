@@ -1,6 +1,9 @@
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
-use std::{process::Command, time::Duration};
+use std::{
+    process::Command,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone)]
 pub(super) struct Gcloud {
@@ -28,6 +31,44 @@ impl Gcloud {
             return Ok(Value::Null);
         }
         serde_json::from_str(&output).context("gcloud returned invalid JSON")
+    }
+
+    /// Wait for a newly enabled API's serving frontend to observe activation.
+    pub fn ready_json(&self, args: &[&str]) -> Result<Value> {
+        let timeout = Duration::from_secs(180);
+        let deadline = Instant::now() + timeout;
+        let task = aegis_tool::ui::task(aegis_tool::ui::TaskOptions {
+            label: format!(
+                "Waiting for GCP API: {}",
+                args.iter().take(3).copied().collect::<Vec<_>>().join(" ")
+            ),
+            deadline: Some(timeout),
+            ..Default::default()
+        })?;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "GCP API activation exceeded its three-minute deadline; resources are retained, rerun setup"
+            );
+            match self.run(args, None, remaining.min(Duration::from_secs(30))) {
+                Ok(output) => {
+                    task.finish_and_clear();
+                    return serde_json::from_str(&output).context("gcloud returned invalid JSON");
+                }
+                Err(error)
+                    if !capulus::error_is_cancelled(&error)
+                        && error.to_string().contains("reason: SERVICE_DISABLED") =>
+                {
+                    task.set_phase("Activation requested; GCP still reports SERVICE_DISABLED");
+                    aegis_tool::ui::sleep(
+                        Duration::from_secs(3)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    )?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     pub fn run(&self, args: &[&str], input: Option<&[u8]>, timeout: Duration) -> Result<String> {
@@ -58,12 +99,16 @@ impl Gcloud {
     }
 
     pub fn token(&self) -> Result<String> {
-        let value: Value = serde_json::from_str(&self.run(
-            &["auth", "print-access-token"],
-            None,
-            Duration::from_secs(30),
-        )?)
-        .context("gcloud returned invalid access-token JSON")?;
+        self.token_as(None, Duration::from_secs(30))
+    }
+
+    pub fn token_as(&self, account: Option<&str>, timeout: Duration) -> Result<String> {
+        let mut args = vec!["auth", "print-access-token"];
+        if let Some(account) = account {
+            args.extend(["--impersonate-service-account", account]);
+        }
+        let value: Value = serde_json::from_str(&self.run(&args, None, timeout)?)
+            .context("gcloud returned invalid access-token JSON")?;
         let token = value["token"]
             .as_str()
             .context("gcloud returned no access token; run gcloud auth login")?;
@@ -91,6 +136,16 @@ impl Gcloud {
             "browser OAuth setup requires a gcloud user account"
         );
         Ok(account)
+    }
+
+    pub fn operator_member(&self) -> Result<String> {
+        let account = self.operator_account()?;
+        let kind = if account.ends_with(".gserviceaccount.com") {
+            "serviceAccount"
+        } else {
+            "user"
+        };
+        Ok(format!("{kind}:{account}"))
     }
 
     pub fn stream(&self, args: &[&str], input: &[u8], timeout: Duration) -> Result<()> {

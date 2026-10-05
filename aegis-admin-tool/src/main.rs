@@ -282,7 +282,15 @@ fn initialize_tls() -> Result<()> {
 
 /// Bound Firestore work and preserve the shared invocation's typed interruption.
 fn database<T>(label: &str, operation: impl Future<Output = Result<T>>) -> Result<T> {
-    let timeout = Duration::from_secs(120);
+    database_with_timeout(label, operation, Duration::from_secs(120))
+}
+
+fn database_with_timeout<T>(
+    label: &str,
+    operation: impl Future<Output = Result<T>>,
+    timeout: Duration,
+) -> Result<T> {
+    ensure!(!timeout.is_zero(), "Firestore operation deadline exceeded");
     let task = ui::task(ui::TaskOptions {
         label: label.into(),
         deadline: Some(timeout),

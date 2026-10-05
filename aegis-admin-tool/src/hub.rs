@@ -468,18 +468,12 @@ fn ensure_hub(deployment: &mut Deployment, region: &str) -> Result<()> {
             ])?;
         }
     }
-    let account = cloud.operator_account()?;
-    let kind = if account.ends_with(".gserviceaccount.com") {
-        "serviceAccount"
-    } else {
-        "user"
-    };
     cloud.json(&[
         "projects",
         "add-iam-policy-binding",
         &deployment.config.project,
         "--member",
-        &format!("{kind}:{account}"),
+        &cloud.operator_member()?,
         "--role=roles/iap.tunnelResourceAccessor",
         "--condition=None",
     ])?;

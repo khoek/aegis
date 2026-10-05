@@ -19,10 +19,20 @@ elif args[:2] == ["services", "enable"]:
 elif command == ("projects", "describe", project):
     result = {"projectNumber": "1234567890"}
 elif args[:2] == ["auth", "print-access-token"]:
+    if "--impersonate-service-account" in args and not state.get("runtime_access_observed"):
+        state["runtime_access_observed"] = True
+        path.write_text(json.dumps(state))
+        print("PERMISSION_DENIED: iam.serviceAccounts.getAccessToken is not yet granted", file=sys.stderr)
+        sys.exit(1)
     result = {"token": "owner"}  # Firestore emulator's documented administrator credential.
 elif args[:2] == ["auth", "list"]:
     result = [{"account": "operator@example.com", "status": "ACTIVE"}]
 elif command == ("firestore", "databases", "list"):
+    if not state.get("firestore_activation_observed"):
+        state["firestore_activation_observed"] = True
+        path.write_text(json.dumps(state))
+        print("Cloud Firestore API activation is propagating\n  reason: SERVICE_DISABLED", file=sys.stderr)
+        sys.exit(1)
     result = [state["database"]] if "database" in state else []
 elif command == ("firestore", "databases", "create"):
     assert "database" not in state
@@ -34,6 +44,8 @@ elif command == ("iam", "service-accounts", "list"):
 elif command == ("iam", "service-accounts", "create"):
     assert not state.get("account")
     state["account"] = True
+elif command == ("iam", "service-accounts", "add-iam-policy-binding"):
+    pass
 elif args[:2] == ["projects", "add-iam-policy-binding"]:
     pass
 elif args[:2] == ["secrets", "list"]:
