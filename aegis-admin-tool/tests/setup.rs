@@ -64,6 +64,12 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
             .unwrap()
             .contains(&json!("cloudresourcemanager.googleapis.com"))
     );
+    assert!(
+        calls[0]
+            .as_array()
+            .unwrap()
+            .contains(&json!("cloudbilling.googleapis.com"))
+    );
     assert_eq!(calls[1][0], "projects");
     assert_eq!(calls[1][1], "describe");
     assert_eq!(calls[2][0], "auth");

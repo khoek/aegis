@@ -260,6 +260,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         "enable",
         "serviceusage.googleapis.com",
         "cloudresourcemanager.googleapis.com",
+        "cloudbilling.googleapis.com",
     ])?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
