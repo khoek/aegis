@@ -1036,7 +1036,7 @@ fn runtime_access_pending(error: &anyhow::Error) -> bool {
         .iter().any(|code| error.to_string().contains(code))
 }
 
-fn project(value: Option<String>) -> Result<String> {
+pub(super) fn project(value: Option<String>) -> Result<String> {
     let value = match value {
         Some(value) => Some(value),
         None => Gcloud::active_project()?,

@@ -172,8 +172,9 @@ fn run(command: AdminCommand) -> Result<i32> {
         AdminCommand::Setup(args) => deployment::setup(args)?,
         AdminCommand::Configure(args) => deployment::configure_external(args)?,
         AdminCommand::Deploy { project, image } => {
-            let mut deployment = Deployment::load(project)?;
-            let _lock = aegis_tool::client::deployment_lock(&deployment.config.project)?;
+            let project = deployment::project(project)?;
+            let _lock = aegis_tool::client::deployment_lock(&project)?;
+            let mut deployment = Deployment::load(Some(project))?;
             deployment.deploy(&image)?;
         }
         AdminCommand::Doctor(args) => Deployment::load(args.project)?.doctor()?,
