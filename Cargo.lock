@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-admin-tool"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "aegis-dto",
  "aegis-tool",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-api"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-dto"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-tool"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -3186,9 +3186,9 @@ dependencies = [
 
 [[package]]
 name = "powerfmt"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
+checksum = "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958"
 
 [[package]]
 name = "ppv-lite86"
@@ -3619,9 +3619,9 @@ dependencies = [
 
 [[package]]
 name = "rsb_derive"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928eba53eeb4ea280732b0f91785124f56a56bac7597ebcf0b7f6d71cc8d32e9"
+checksum = "17cbcc28134aef8442f79f76d4a0f6e90aa9f9b5a5e4ceac633a0e1bcf879117"
 dependencies = [
  "proc-macro2",
  "quote",

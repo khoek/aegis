@@ -18,6 +18,8 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy -p aegis-tool --all-targets --locked -- -D warnings
       - run: cargo test -p aegis-tool --locked
+      - name: Check long-running fleet installs
+        run: cargo test -p aegis-tool --locked remote_install_waits_for_slow_builds -- --ignored
       - name: Check client dependency boundary
         run: |
           python3 - <<'PY'

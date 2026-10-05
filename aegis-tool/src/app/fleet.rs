@@ -1091,23 +1091,13 @@ fn run_remote(
     update_user: bool,
 ) -> Result<local_agent::RedeployResponse> {
     let remote_command = remote_redeploy_command(target_version, update_user);
-    let mut command = prepared.timed_ssh_command(
-        &[],
-        Some(&remote_command),
-        None,
-        false,
-        FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT,
-    );
-    let output = crate::command::run_capture(&mut command)?;
+    let mut command = prepared.ssh_command(&[], Some(&remote_command), None, false);
+    let output = capture_remote_install(&mut command).context(
+        "remote redeploy stopped; user CLI changes or an agent job may be retained; inspect the host before retrying",
+    )?;
     if output.status.success() {
         return serde_json::from_str(output.stdout.trim())
             .context("remote aegis-agent returned an invalid redeploy response");
-    }
-    if output.status.code() == Some(124) {
-        bail!(
-            "remote fleet redeploy timed out after {}",
-            host_list::elapsed_duration_text(FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT)
-        );
     }
     bail!(
         "remote fleet redeploy failed: {}",
@@ -1120,27 +1110,29 @@ fn run_remote_user_update(
     target_version: &RedeployVersion,
 ) -> Result<()> {
     let remote_command = remote_user_update_command(target_version);
-    let mut command = prepared.timed_ssh_command(
-        &[],
-        Some(&remote_command),
-        None,
-        false,
-        FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT,
-    );
-    let output = crate::command::run_capture(&mut command)?;
+    let mut command = prepared.ssh_command(&[], Some(&remote_command), None, false);
+    let output = capture_remote_install(&mut command).context(
+        "remote user update stopped; the user CLI may have changed; inspect the host before retrying",
+    )?;
     if output.status.success() {
         return Ok(());
-    }
-    if output.status.code() == Some(124) {
-        bail!(
-            "remote user CLI update timed out after {}",
-            host_list::elapsed_duration_text(FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT)
-        );
     }
     bail!(
         "remote user CLI update failed: {}",
         command_output_full_failure_detail(&output)
     )
+}
+
+fn capture_remote_install(
+    command: &mut std::process::Command,
+) -> Result<crate::command::CommandOutput> {
+    capulus::process::CaptureOptions {
+        timeout: FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT,
+        cancellation: ui::cancellation(),
+        ..Default::default()
+    }
+    .validate()?
+    .run(command, None)
 }
 
 pub(super) fn remote_redeploy_command(
@@ -1178,6 +1170,17 @@ fn remote_user_update_command(target_version: &RedeployVersion) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "waits beyond the two-minute query deadline"]
+    fn remote_install_waits_for_slow_builds() {
+        let output = capture_remote_install(
+            std::process::Command::new("sh").args(["-c", "sleep 121; printf completed"]),
+        )
+        .expect("a slow build must receive the fleet installation deadline");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, "completed");
+    }
 
     #[test]
     fn version_wait_refreshes_remote_ssh_assets_before_first_probe() {
