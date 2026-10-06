@@ -6,6 +6,7 @@ mod deployment;
 mod gcloud;
 mod hub;
 mod identity;
+mod prerequisites;
 mod store;
 
 use std::{future::Future, path::PathBuf, time::Duration};

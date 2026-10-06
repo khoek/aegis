@@ -9,16 +9,30 @@ args = sys.argv[1:]
 path = Path(os.environ["AEGIS_TEST_CLOUD_STATE"])
 state = json.loads(path.read_text()) if path.exists() else {"calls": [], "secret_versions": 0}
 state["calls"].append(args)
-project = args[args.index("--project") + 1]
+project = args[args.index("--project") + 1] if "--project" in args else None
 command = tuple(args[:3])
 result = None
-if args[:2] == ["billing", "projects"]:
-    result = {"billingEnabled": True}
+if args[0] == "version":
+    result = {"Google Cloud SDK": "test"}
+elif args[:3] == ["config", "get", "project"]:
+    path.write_text(json.dumps(state))
+    print(state.get("active_project", "(unset)"))
+    sys.exit(0)
+elif args[:3] == ["config", "set", "project"]:
+    state["active_project"] = args[3]
+elif args[:2] == ["projects", "list"]:
+    result = state.get("projects", [{"projectId": "aegis-fresh-test"}])
+elif args[:2] == ["billing", "projects"]:
+    result = {"billingEnabled": state.get("billing_enabled", True) or path.with_suffix(".billing-enabled").exists()}
 elif args[:2] == ["services", "enable"]:
     pass
 elif command == ("projects", "describe", project):
     result = {"projectNumber": "1234567890"}
 elif args[:2] == ["auth", "print-access-token"]:
+    if state.get("expired_auth"):
+        path.write_text(json.dumps(state))
+        print("Reauthentication required", file=sys.stderr)
+        sys.exit(1)
     if "--impersonate-service-account" in args and not state.get("runtime_access_observed"):
         state["runtime_access_observed"] = True
         path.write_text(json.dumps(state))
@@ -26,7 +40,7 @@ elif args[:2] == ["auth", "print-access-token"]:
         sys.exit(1)
     result = {"token": "owner"}  # Firestore emulator's documented administrator credential.
 elif args[:2] == ["auth", "list"]:
-    result = [{"account": "operator@example.com", "status": "ACTIVE"}]
+    result = [] if state.get("signed_out") and not path.with_suffix(".signed-in").exists() else [{"account": "operator@example.com", "status": "ACTIVE"}]
 elif command == ("firestore", "databases", "list"):
     if not state.get("firestore_activation_observed"):
         state["firestore_activation_observed"] = True

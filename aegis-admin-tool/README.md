@@ -8,8 +8,8 @@ aegis-admin setup
 aegis-admin authorize
 ```
 
-Setup provisions the API and first hub, authorizes the owner, and enrolls the
-current machine. Credentials are issued through local GCP access; browser OAuth is
+Setup guides missing GCP prerequisites, provisions the API and first hub,
+authorizes the owner, and enrolls the current machine. Credentials are issued through local GCP access; browser OAuth is
 opt-in with `setup --oauth`. Use `--no-enroll` for an operator-only computer. Administration
 uses local GCP access; no administration credentials travel through the Aegis API.
 

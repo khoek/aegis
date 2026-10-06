@@ -56,24 +56,23 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
     }
     let cloud: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
     let calls = cloud["calls"].as_array().unwrap();
-    assert_eq!(calls.len(), 3);
-    assert_eq!(calls[0][0], "services");
+    let management_apis = calls.iter().find(|call| call[0] == "services").unwrap();
     assert!(
-        calls[0]
+        management_apis
             .as_array()
             .unwrap()
             .contains(&json!("cloudresourcemanager.googleapis.com"))
     );
     assert!(
-        calls[0]
+        management_apis
             .as_array()
             .unwrap()
             .contains(&json!("cloudbilling.googleapis.com"))
     );
-    assert_eq!(calls[1][0], "projects");
-    assert_eq!(calls[1][1], "describe");
-    assert_eq!(calls[2][0], "auth");
-    assert_eq!(calls[2][1], "list");
+    assert!(calls.iter().any(|call| call[0] == "billing"));
+    assert!(calls.iter().all(|call| {
+        ["version", "auth", "services", "billing", "projects"].contains(&call[0].as_str().unwrap())
+    }));
     assert!(
         !dir.path()
             .join(".aegis/deployments/aegis-fresh-test.json")

@@ -26,11 +26,17 @@ impl Gcloud {
     }
 
     pub fn json(&self, args: &[&str]) -> Result<Value> {
-        let output = self.run(args, None, Duration::from_secs(20 * 60))?;
-        if output.trim().is_empty() {
-            return Ok(Value::Null);
-        }
-        serde_json::from_str(&output).context("gcloud returned invalid JSON")
+        decode(&self.run(args, None, Duration::from_secs(20 * 60))?)
+    }
+
+    pub fn global_json(args: &[&str]) -> Result<Value> {
+        decode(&execute(
+            Command::new("gcloud")
+                .args(args)
+                .args(["--quiet", "--format=json"]),
+            None,
+            Duration::from_secs(30),
+        )?)
     }
 
     /// Wait for a newly enabled API's serving frontend to observe activation.
@@ -72,30 +78,16 @@ impl Gcloud {
     }
 
     pub fn run(&self, args: &[&str], input: Option<&[u8]>, timeout: Duration) -> Result<String> {
-        let phase = args.iter().take(3).copied().collect::<Vec<_>>().join(" ");
-        let task = aegis_tool::ui::task(aegis_tool::ui::TaskOptions {
-            label: format!("GCP: {phase}"),
-            deadline: Some(timeout),
-            ..Default::default()
-        })?;
-        let mut command = Command::new("gcloud");
-        command
-            .args(args)
-            .args(["--project", &self.project, "--quiet", "--format=json"]);
-        let output = capulus::process::CaptureOptions {
+        execute(
+            Command::new("gcloud").args(args).args([
+                "--project",
+                &self.project,
+                "--quiet",
+                "--format=json",
+            ]),
+            input,
             timeout,
-            cancellation: aegis_tool::ui::current().cancellation(),
-            ..Default::default()
-        }
-        .validate()?
-        .run(&mut command, input)?;
-        ensure!(
-            output.status.success(),
-            "gcloud {phase} failed: {}",
-            output.stderr.trim()
-        );
-        task.finish_and_clear();
-        Ok(output.stdout)
+        )
     }
 
     pub fn token(&self) -> Result<String> {
@@ -171,22 +163,48 @@ impl Gcloud {
     }
 
     pub fn active_project() -> Result<Option<String>> {
-        let output = capulus::process::CaptureOptions {
-            timeout: Duration::from_secs(30),
-            cancellation: aegis_tool::ui::current().cancellation(),
-            ..Default::default()
-        }
-        .validate()?
-        .run(
+        let output = execute(
             Command::new("gcloud").args(["config", "get", "project", "--quiet"]),
             None,
+            Duration::from_secs(30),
         )?;
-        ensure!(
-            output.status.success(),
-            "cannot read gcloud configuration: {}",
-            output.stderr.trim()
-        );
-        let value = output.stdout.trim();
+        let value = output.trim();
         Ok((!value.is_empty() && value != "(unset)").then(|| value.to_owned()))
     }
+}
+
+fn decode(output: &str) -> Result<Value> {
+    if output.trim().is_empty() {
+        Ok(Value::Null)
+    } else {
+        serde_json::from_str(output).context("gcloud returned invalid JSON")
+    }
+}
+
+fn execute(command: &mut Command, input: Option<&[u8]>, timeout: Duration) -> Result<String> {
+    let phase = command
+        .get_args()
+        .take(3)
+        .map(|arg| arg.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let task = aegis_tool::ui::task(aegis_tool::ui::TaskOptions {
+        label: format!("GCP: {phase}"),
+        deadline: Some(timeout),
+        ..Default::default()
+    })?;
+    let output = capulus::process::CaptureOptions {
+        timeout,
+        cancellation: aegis_tool::ui::current().cancellation(),
+        ..Default::default()
+    }
+    .validate()?
+    .run(command, input)?;
+    task.finish_and_clear();
+    ensure!(
+        output.status.success(),
+        "gcloud {phase} failed: {}",
+        output.stderr.trim()
+    );
+    Ok(output.stdout)
 }

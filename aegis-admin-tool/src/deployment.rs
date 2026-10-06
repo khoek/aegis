@@ -246,23 +246,20 @@ impl GoogleWebClient {
 }
 
 pub(super) fn setup(args: SetupArgs) -> Result<()> {
-    let project = project(args.project.clone())?;
-    let _lock = aegis_tool::client::deployment_lock(&project)?;
     if let Some(region) = &args.region {
         ensure!(valid_region(region), "invalid GCP region");
     }
     for region in &args.hub_regions {
         ensure!(valid_region(region), "invalid hub region: {region}");
     }
-    ui::stage("Preparing GCP management APIs");
-    Gcloud::new(project.clone())?.json(&[
-        "services",
-        "enable",
-        "serviceusage.googleapis.com",
-        "cloudresourcemanager.googleapis.com",
-        "cloudbilling.googleapis.com",
-        "iamcredentials.googleapis.com",
-    ])?;
+    if !args.no_enroll {
+        aegis_tool::client::enrollment::check_local_enrollment_platform()
+            .context("Setup can enroll Ubuntu machines running systemd. Use `aegis-admin setup --no-enroll` to administer the fleet from this computer")?;
+    }
+    let cloud = super::prerequisites::prepare(args.project.clone(), !args.yes)?;
+    let project = cloud.project.clone();
+    let _lock = aegis_tool::client::deployment_lock(&project)?;
+    super::prerequisites::check_project(&cloud, !args.yes)?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
     let mut deployment = if path.exists() {
@@ -403,10 +400,10 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
                 .wait_for_newline(true)
                 .interact()
         })?;
-        ensure!(accepted, "Setup declined; no resources were changed");
-    }
-    if !args.no_enroll {
-        aegis_tool::client::enrollment::check_local_enrollment_platform()?;
+        ensure!(
+            accepted,
+            "Setup declined. GCP management APIs remain enabled; any billing changes are retained. No Aegis resources were created in this run"
+        );
     }
     deployment.persist()?;
     let result = deployment.setup_steps(client_secret.as_deref(), &args);
@@ -571,12 +568,6 @@ impl Deployment {
     }
     fn provision(&mut self, secret: Option<&str>) -> Result<()> {
         let cloud = self.cloud()?;
-        let billing =
-            cloud.ready_json(&["billing", "projects", "describe", &self.config.project])?;
-        ensure!(
-            billing["billingEnabled"] == true,
-            "Enable billing for this GCP project before setup"
-        );
         cloud.json(&[
             "services",
             "enable",

@@ -1,8 +1,22 @@
 # Setup
 
-Install `aegis-tool`, `aegis-admin-tool`, and the Google Cloud CLI. Sign in with
-`gcloud auth login` and select a project with billing enabled. The operator needs
-permission to provision Cloud Run, Firestore, IAM, Compute Engine, and IAP.
+Install current stable [Rust](https://rustup.rs/), then:
+
+```sh
+# Ubuntu build dependencies, if not already installed:
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libssl-dev
+cargo install --locked aegis-tool aegis-admin-tool
+aegis-admin setup
+```
+
+Setup checks for the Google Cloud CLI and gives installation instructions if it
+is missing. It guides GCP sign-in, project selection or creation, and billing
+activation when needed. Sign-in and billing checks resume automatically while
+you complete the instructions in another terminal or the Cloud Console. The
+operator needs permission to provision Cloud Run, Firestore, IAM, Compute Engine,
+and IAP; setup identifies the selected account and links to project access settings
+if management API activation is denied.
 
 Run `aegis-admin setup`. It proposes a region from your timezone, asks once about
 a custom public endpoint, and shows the resource plan. It selects and pins the
@@ -13,8 +27,9 @@ current Ubuntu/systemd machine, and checks readiness. No OAuth client or browser
 configuration is required. Use `--no-enroll` for an operator-only computer.
 
 Each hub is an `e2-medium` with a 30 GB disk and reserved public address. GCP bills
-these resources to your project. For unattended setup, supply `--project`,
-`--region`, and `--yes`; `--endpoint` is optional.
+these resources to your project. For unattended setup, complete the prerequisites
+and supply `--project`, `--region`, and `--yes`; `--endpoint` is optional. Missing
+prerequisites produce repair instructions without waiting for input.
 
 Rerun setup to manage hub regions: Space selects regions, Enter reviews the changes.
 New hubs become healthy before removed hubs are deleted. Removal deletes that
