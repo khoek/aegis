@@ -177,7 +177,10 @@ fn run(command: AdminCommand) -> Result<i32> {
             let mut deployment = Deployment::load(Some(project))?;
             deployment.deploy(&deployment::resolve_image(image.as_deref())?)?;
         }
-        AdminCommand::Doctor(args) => Deployment::load(args.project)?.doctor()?,
+        AdminCommand::Doctor(args) => println!(
+            "{}",
+            serde_json::to_string_pretty(&Deployment::load(args.project)?.check()?)?
+        ),
         AdminCommand::Authorize {
             oauth,
             user,

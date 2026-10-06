@@ -532,7 +532,8 @@ impl Deployment {
             self.enroll_current_machine()?;
             self.complete("Current machine")?;
         }
-        self.doctor()
+        self.check()?;
+        Ok(())
     }
 
     fn enroll_current_machine(&mut self) -> Result<()> {
@@ -984,7 +985,7 @@ impl Deployment {
             ui::sleep(Duration::from_secs(3))?;
         }
     }
-    pub fn doctor(&self) -> Result<()> {
+    pub fn check(&self) -> Result<Value> {
         let admin = self.connect()?;
         let status = database("Checking stored identity", admin.status())?;
         ensure!(
@@ -1010,14 +1011,10 @@ impl Deployment {
             "Cloud Run service is not ready"
         );
         super::hub::check_all(self, &mut api)?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(
-                &json!({"project":self.config.project,"endpoint":self.config.endpoint,
-            "namespace":membership.namespace,"role":membership.role,"hubs":self.hubs,"image":self.image,"ready":true})
-            )?
-        );
-        Ok(())
+        Ok(
+            json!({"project":self.config.project,"endpoint":self.config.endpoint,
+            "namespace":membership.namespace,"role":membership.role,"hubs":self.hubs,"image":self.image,"ready":true}),
+        )
     }
 }
 
