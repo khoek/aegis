@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use aegis_dto::{HostAlias, HostAliases, HostId, v1::AegisHost};
+use aegis_dto::{HostAlias, HostAliases, HostId, protocol::AegisHost};
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::api::AuthenticatedApiClient;

@@ -152,10 +152,10 @@ mod tests {
     }
 
     #[test]
-    fn stable_user_ids_cannot_overlap_the_legacy_email_namespace() {
+    fn stable_user_ids_reject_email_addresses() {
         oauth_user_subject("OpaqueUserID").expect("opaque stable id should validate");
         oauth_user_subject("user@example.com")
-            .expect_err("stable id must not overlap the legacy email namespace");
+            .expect_err("email addresses are not stable user IDs");
     }
 
     #[test]

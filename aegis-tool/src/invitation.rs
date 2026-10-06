@@ -5,7 +5,9 @@ use std::{
 
 use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases,
-    v1::{AegisEnrollmentCreateRequest, AegisEnrollmentCredentialResponse, AegisEnrollmentSsh},
+    protocol::{
+        AegisEnrollmentCreateRequest, AegisEnrollmentCredentialResponse, AegisEnrollmentSsh,
+    },
 };
 use anyhow::{Context, Result, ensure};
 
@@ -49,7 +51,7 @@ pub fn reserve(
     api: &mut AuthenticatedApiClient,
     alias: HostAlias,
     mode: AegisHostMode,
-) -> Result<aegis_dto::v1::AegisEnrollment> {
+) -> Result<aegis_dto::protocol::AegisEnrollment> {
     api.require_user_admin("enroll a machine")?;
     api.create_enrollment(&AegisEnrollmentCreateRequest {
         aliases: HostAliases::new(vec![alias])?,
@@ -60,7 +62,7 @@ pub fn reserve(
             external_principals: Vec::new(),
         }),
         transient: false,
-        initial_oauth_principal: None,
+        initial_user_id: None,
         ttl_seconds: 24 * 60 * 60,
     })
 }

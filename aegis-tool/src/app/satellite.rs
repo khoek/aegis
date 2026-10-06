@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use aegis_dto::{
     HostAlias, HostId,
-    v1::{
+    protocol::{
         AegisDirectGateway, AegisSatellite, AegisSatelliteCreateRequest,
         AegisSatelliteProvisionResponse, AegisSatelliteStatus,
     },
@@ -704,7 +704,7 @@ mod tests {
 
     use aegis_dto::{
         HostAlias, HostAliases, HostId,
-        v1::{
+        protocol::{
             AegisDirectGateway, AegisDirectGatewayConfig, AegisDirectWireGuard, AegisSatellite,
             AegisSatelliteProvisionResponse, AegisSatelliteStatus,
         },

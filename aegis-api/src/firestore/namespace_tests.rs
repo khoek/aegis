@@ -142,8 +142,16 @@ async fn exercise_namespaces() -> anyhow::Result<()> {
         phylax_core::RefreshTokenValidation::Valid(_)
     ));
 
-    ensure_client_ca_config(&alice).await?;
-    ensure_client_ca_config(&bob).await?;
+    for namespace in [&alice, &bob] {
+        namespace
+            .create_typed_at(
+                &aegis_ssh_parent(namespace)?,
+                SSH_CAS_COLLECTION,
+                SSH_USER_CA_DOC,
+                &default_client_ca_document()?,
+            )
+            .await?;
+    }
     let alice_ca = load_client_ca_config(&alice).await?;
     let bob_ca = load_client_ca_config(&bob).await?;
     assert_ne!(alice_ca.private_key_pem, bob_ca.private_key_pem);

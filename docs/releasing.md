@@ -41,6 +41,6 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-admin-tool --test set
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-api -- --ignored
 ```
 
-Fleet upgrades remain a separate operator action. Retire temporary transition
-images and private packaging after every enrolled machine has reached the strict
-public release. Never bypass the agent-managed installation channel.
+Fleet upgrades are an explicit operator action through
+`aegis advanced fleet redeploy --version VERSION`. Verify healthy agents and SSH
+access before retiring the previous deployment.

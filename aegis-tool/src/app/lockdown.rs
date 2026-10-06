@@ -4,7 +4,7 @@ use std::path::Path;
 
 use aegis_dto::{
     DEFAULT_AEGIS_NETWORK,
-    v1::{AegisHostMessage, AegisHostMessageLevel},
+    protocol::{AegisHostMessage, AegisHostMessageLevel},
 };
 use anyhow::{Context, Result, anyhow};
 use capulus::shell::shell_quote as sh_quote;

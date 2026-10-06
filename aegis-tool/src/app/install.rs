@@ -69,7 +69,7 @@ struct ResolvedInstall {
     cert: Option<PathBuf>,
     host_id: HostId,
     install_auth: InstallAuth,
-    initial_oauth_principal: Option<String>,
+    initial_user_id: Option<String>,
     login_principal: String,
     inbound_ssh: bool,
     staged_enrollment: bool,
@@ -143,8 +143,8 @@ impl ResolvedInstall {
             })
             .unwrap_or(true);
         let host_id = resolve_host_id(args, existing_install.as_ref())?;
-        let initial_oauth_principal = args
-            .initial_oauth_principal
+        let initial_user_id = args
+            .initial_user_id
             .as_deref()
             .map(crate::principal_grants::validate_user_id)
             .transpose()?;
@@ -167,7 +167,7 @@ impl ResolvedInstall {
             cert,
             host_id,
             install_auth,
-            initial_oauth_principal,
+            initial_user_id,
             login_principal,
             inbound_ssh,
             staged_enrollment: args.staged_enrollment,
@@ -252,11 +252,11 @@ impl ResolvedInstall {
     }
 
     fn apply_initial_principal_grant(&self) -> Result<()> {
-        let Some(oauth_principal) = self.initial_oauth_principal.as_deref() else {
+        let Some(user_id) = self.initial_user_id.as_deref() else {
             return Ok(());
         };
         let mut grants = crate::principal_grants::PrincipalGrantStore::load()?;
-        grants.allow(&self.login_principal, oauth_principal)?;
+        grants.allow(&self.login_principal, user_id)?;
         grants.persist()
     }
 

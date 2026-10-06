@@ -75,7 +75,7 @@ pub(crate) struct Snapshot {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Status {
     pub source: aegis_dto::HostId,
-    pub central: Option<aegis_dto::v1::AegisEgressStatus>,
+    pub central: Option<aegis_dto::protocol::AegisEgressStatus>,
     pub central_error: Option<String>,
     pub local: crate::agent::AgentTunnelStatus,
     pub aliases: std::collections::BTreeMap<aegis_dto::HostId, String>,

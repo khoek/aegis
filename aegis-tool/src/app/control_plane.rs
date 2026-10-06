@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use aegis_dto::v1::{
+use aegis_dto::protocol::{
     AegisDnsRecordKind, AegisDnsSyncRequest, AegisDnsSyncResponse, AegisEnrollmentCreateRequest,
     AegisSyncAction, AegisTlsDesiredState, AegisTlsSyncRequest, AegisTlsSyncResponse,
 };

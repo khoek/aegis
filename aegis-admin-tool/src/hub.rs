@@ -702,7 +702,7 @@ fn wait_for_ssh(cloud: &super::gcloud::Gcloud, name: &str, zone: &str) -> Result
 }
 
 fn bootstrap_script(
-    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::protocol::AegisEnrollmentCredentialResponse,
 ) -> Result<String> {
     Ok(format!(
         r#"set -euo pipefail

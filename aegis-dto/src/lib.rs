@@ -559,7 +559,7 @@ pub enum WireGuardHostIdentity {
 }
 
 pub fn wireguard_host_id_from_addresses(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
     wireguard_ipv4: &str,
     wireguard_ipv6: &str,
 ) -> Result<u16, WireGuardAddressError> {
@@ -572,7 +572,7 @@ pub fn wireguard_host_id_from_addresses(
 }
 
 pub fn wireguard_host_identity_from_addresses(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
     wireguard_ipv4: &str,
     wireguard_ipv6: &str,
 ) -> Result<WireGuardHostIdentity, WireGuardAddressError> {
@@ -585,21 +585,21 @@ pub fn wireguard_host_identity_from_addresses(
 }
 
 pub fn allocate_lowest_free_wireguard_host_id<'a>(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
     used: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Result<u16, WireGuardAddressError> {
     allocate_lowest_free_host_id(&pool.subnet_ipv4, &pool.subnet_ipv6, used)
 }
 
 pub fn validate_wireguard_address_pool(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
 ) -> Result<(), WireGuardAddressError> {
     max_wireguard_host_id(&pool.subnet_ipv4, &pool.subnet_ipv6).map(|_| ())
 }
 
 pub fn wireguard_address_pools_overlap(
-    left: &v1::AegisWireGuardAddressPool,
-    right: &v1::AegisWireGuardAddressPool,
+    left: &protocol::AegisWireGuardAddressPool,
+    right: &protocol::AegisWireGuardAddressPool,
 ) -> Result<bool, WireGuardAddressError> {
     validate_wireguard_address_pool(left)?;
     validate_wireguard_address_pool(right)?;
@@ -618,14 +618,14 @@ pub fn wireguard_address_pools_overlap(
 }
 
 pub fn wireguard_ipv4_for_host_id(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
     host_id: u16,
 ) -> Result<String, WireGuardAddressError> {
     wireguard_ipv4_for_host_id_in_subnet(&pool.subnet_ipv4, &pool.subnet_ipv6, host_id)
 }
 
 pub fn wireguard_ipv6_for_host_id(
-    pool: &v1::AegisWireGuardAddressPool,
+    pool: &protocol::AegisWireGuardAddressPool,
     host_id: u16,
 ) -> Result<String, WireGuardAddressError> {
     wireguard_ipv6_for_host_id_in_subnet(&pool.subnet_ipv4, &pool.subnet_ipv6, host_id)
@@ -1027,7 +1027,7 @@ pub fn sshd_install_dropin_contents(
     content
 }
 
-pub mod v1 {
+pub mod protocol {
     use crate::{AegisHostMode, HostAlias, HostAliases, HostId};
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use serde::{Deserialize, Serialize};
@@ -1434,7 +1434,7 @@ pub mod v1 {
         #[serde(default)]
         pub transient: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub initial_oauth_principal: Option<String>,
+        pub initial_user_id: Option<String>,
         #[serde(default = "default_enrollment_ttl_seconds")]
         pub ttl_seconds: u64,
     }
@@ -1449,7 +1449,7 @@ pub mod v1 {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ssh: Option<AegisEnrollmentSsh>,
         pub transient: bool,
-        pub initial_oauth_principal: String,
+        pub initial_user_id: String,
         pub phase: AegisEnrollmentPhase,
         pub credential_issued: bool,
         pub created_unix: i64,
@@ -2094,7 +2094,7 @@ pub mod v1 {
     #[serde(deny_unknown_fields)]
     pub struct AegisPrincipalGrant {
         pub login_principal: String,
-        pub oauth_principal: String,
+        pub user_id: String,
     }
 
     #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2189,9 +2189,9 @@ mod tests {
     use super::{
         AegisHostMode, HostAlias, HostAliases, HostId, InvalidHostAliases, MAX_HOST_ALIASES,
         WireGuardHostIdentity, allocate_lowest_free_wireguard_host_id, normalize_wireguard_ipv4,
-        normalize_wireguard_key, path, v1,
-        v1::AegisMeshConfig,
-        v1::{AegisHostMessage, AegisHostMessageLevel},
+        normalize_wireguard_key, path, protocol,
+        protocol::AegisMeshConfig,
+        protocol::{AegisHostMessage, AegisHostMessageLevel},
         validate_satellite_slug, validate_wireguard_address_pool,
         validate_wireguard_interface_name, wireguard_address_pools_overlap,
         wireguard_host_id_from_addresses, wireguard_host_identity_from_addresses,
@@ -2202,6 +2202,21 @@ mod tests {
         format!("00000000-0000-4000-8000-{index:012x}")
             .parse()
             .expect("test host id should parse")
+    }
+
+    #[test]
+    fn principal_grants_require_the_current_user_id_field() {
+        let grant: protocol::AegisPrincipalGrant = serde_json::from_value(serde_json::json!({
+            "login_principal": "ubuntu", "user_id": "user-1"
+        }))
+        .unwrap();
+        assert_eq!(grant.user_id, "user-1");
+        for value in [
+            serde_json::json!({"login_principal": "ubuntu", "oauth_principal": "user-1"}),
+            serde_json::json!({"login_principal": "ubuntu", "user_id": "user-1", "oauth_principal": "user-1"}),
+        ] {
+            assert!(serde_json::from_value::<protocol::AegisPrincipalGrant>(value).is_err());
+        }
     }
 
     #[test]
@@ -2230,12 +2245,12 @@ mod tests {
 
     #[test]
     fn agent_token_response_has_one_explicit_credential_schema() {
-        let response = v1::AgentTokenResponse {
+        let response = protocol::AgentTokenResponse {
             access_token: "access".to_string(),
             token_type: "Bearer".to_string(),
             expires_in: 300,
             host_id: test_host_id(1),
-            credential_kind: v1::AegisCredentialKind::Agent,
+            credential_kind: protocol::AegisCredentialKind::Agent,
             refresh_token: "refresh".to_string(),
             refresh_expires_in: 3600,
         };
@@ -2319,13 +2334,13 @@ mod tests {
 
     #[test]
     fn wireguard_pool_validation_and_overlap_cover_both_address_families() {
-        let base = v1::AegisWireGuardAddressPool {
+        let base = protocol::AegisWireGuardAddressPool {
             subnet_ipv4: "10.77.1.0/24".to_string(),
             subnet_ipv6: "fd77::1:0/120".to_string(),
         };
         validate_wireguard_address_pool(&base).expect("ordinary dual-stack pool should validate");
 
-        let disjoint = v1::AegisWireGuardAddressPool {
+        let disjoint = protocol::AegisWireGuardAddressPool {
             subnet_ipv4: "10.77.2.0/24".to_string(),
             subnet_ipv6: "fd77::2:0/120".to_string(),
         };
@@ -2334,7 +2349,7 @@ mod tests {
                 .expect("disjoint pools should compare")
         );
 
-        let overlapping_ipv6 = v1::AegisWireGuardAddressPool {
+        let overlapping_ipv6 = protocol::AegisWireGuardAddressPool {
             subnet_ipv4: "10.77.2.0/24".to_string(),
             subnet_ipv6: "fd77::1:80/121".to_string(),
         };
@@ -2343,7 +2358,7 @@ mod tests {
                 .expect("overlapping pools should compare")
         );
 
-        let too_small = v1::AegisWireGuardAddressPool {
+        let too_small = protocol::AegisWireGuardAddressPool {
             subnet_ipv4: "192.0.2.1/32".to_string(),
             subnet_ipv6: "2001:db8::1/128".to_string(),
         };
@@ -2370,17 +2385,17 @@ mod tests {
     #[test]
     fn host_report_requires_complete_agent_observations() {
         assert!(
-            serde_json::from_str::<v1::AegisHostReportRequest>(
+            serde_json::from_str::<protocol::AegisHostReportRequest>(
                 r#"{"messages":[],"principal_grants":[]}"#
             )
             .is_err()
         );
 
-        let report = v1::AegisHostReportRequest {
+        let report = protocol::AegisHostReportRequest {
             messages: Vec::new(),
-            agent: v1::AegisAgentStatus {
+            agent: protocol::AegisAgentStatus {
                 version: "1.2.3".to_string(),
-                health: v1::AegisAgentHealth {
+                health: protocol::AegisAgentHealth {
                     boot_id: "00000000-0000-0000-0000-000000000001".to_string(),
                     reconciled_since_boot: true,
                     applied_aliases: Some(
@@ -2395,9 +2410,9 @@ mod tests {
             },
             principal_grants: Vec::new(),
             ssh_lockdown_enabled: true,
-            direct_gateway: v1::AegisDirectGatewayReport {
+            direct_gateway: protocol::AegisDirectGatewayReport {
                 observed_unix: 100,
-                peers: vec![v1::AegisDirectPeerObservation {
+                peers: vec![protocol::AegisDirectPeerObservation {
                     public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
                     latest_handshake_unix: Some(99),
                 }],
@@ -2414,7 +2429,7 @@ mod tests {
     #[test]
     fn direct_gateway_config_requires_full_tunnel_dns() {
         let incomplete = r#"{"interface":"wg-aegis-direct","endpoint_port":51822,"mtu":1380,"fwmark":44641,"subnet_ipv4":"10.77.1.0/24","subnet_ipv6":"fd77::1:0/120"}"#;
-        assert!(serde_json::from_str::<v1::AegisDirectGatewayConfig>(incomplete).is_err());
+        assert!(serde_json::from_str::<protocol::AegisDirectGatewayConfig>(incomplete).is_err());
     }
 
     #[test]
@@ -2433,13 +2448,15 @@ mod tests {
             "direct_client_ca_public_key": "ssh-ed25519 AAAA",
             "satellites": []
         });
-        serde_json::from_value::<v1::AegisDirectGatewayInventory>(inventory.clone())
+        serde_json::from_value::<protocol::AegisDirectGatewayInventory>(inventory.clone())
             .expect("current direct-gateway inventory should deserialize");
         inventory
             .as_object_mut()
             .expect("inventory should be an object")
             .insert("setups".to_string(), serde_json::json!([]));
-        assert!(serde_json::from_value::<v1::AegisDirectGatewayInventory>(inventory).is_err());
+        assert!(
+            serde_json::from_value::<protocol::AegisDirectGatewayInventory>(inventory).is_err()
+        );
     }
 
     #[test]
@@ -2454,10 +2471,10 @@ mod tests {
     #[test]
     fn user_cert_principal_is_stable_pair_scoped_and_id_exact() {
         let host_id = test_host_id(1);
-        let left = v1::aegis_user_cert_principal(&host_id, "khoek", "OpaqueUserID");
-        let same = v1::aegis_user_cert_principal(&host_id, "khoek", "OpaqueUserID");
-        let different_login = v1::aegis_user_cert_principal(&host_id, "root", "OpaqueUserID");
-        let different_id = v1::aegis_user_cert_principal(&host_id, "khoek", "opaqueuserid");
+        let left = protocol::aegis_user_cert_principal(&host_id, "khoek", "OpaqueUserID");
+        let same = protocol::aegis_user_cert_principal(&host_id, "khoek", "OpaqueUserID");
+        let different_login = protocol::aegis_user_cert_principal(&host_id, "root", "OpaqueUserID");
+        let different_id = protocol::aegis_user_cert_principal(&host_id, "khoek", "opaqueuserid");
 
         assert_eq!(left, same);
         assert_ne!(left, different_login);
@@ -2469,15 +2486,15 @@ mod tests {
     #[test]
     fn user_cert_principal_login_round_trip_preserves_dashes() {
         let host_id = test_host_id(1);
-        let principal = v1::aegis_user_cert_principal(&host_id, "pj-hoek", "OpaqueUserID");
+        let principal = protocol::aegis_user_cert_principal(&host_id, "pj-hoek", "OpaqueUserID");
 
         assert_eq!(
             Some("pj-hoek".to_string()),
-            v1::aegis_login_principal_from_user_cert_principal(&host_id, &principal)
+            protocol::aegis_login_principal_from_user_cert_principal(&host_id, &principal)
         );
         assert_eq!(
             None,
-            v1::aegis_login_principal_from_user_cert_principal(&test_host_id(2), &principal)
+            protocol::aegis_login_principal_from_user_cert_principal(&test_host_id(2), &principal)
         );
     }
 
@@ -2510,7 +2527,7 @@ mod tests {
 
     #[test]
     fn wireguard_host_identity_uses_one_peer_namespace() {
-        let pool = v1::AegisMeshConfig {
+        let pool = protocol::AegisMeshConfig {
             endpoint_port: 51820,
             overlay_mtu: 1350,
             subnet_ipv4: "10.75.0.0/16".to_string(),

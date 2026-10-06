@@ -1,4 +1,4 @@
-use aegis_dto::{HostId, v1::AegisNetworkConfig};
+use aegis_dto::{HostId, protocol::AegisNetworkConfig};
 use anyhow::Result;
 use capulus::shell::shell_quote as sh_quote;
 
@@ -52,7 +52,7 @@ pub(super) struct RemoteFinalizeInstall<'a> {
     server_certificate: Option<&'a str>,
     agent_token: &'a str,
     login_principal: &'a str,
-    initial_oauth_principal: Option<&'a str>,
+    initial_user_id: Option<&'a str>,
     mode: AgentMode,
     inbound_ssh: bool,
 }
@@ -65,7 +65,7 @@ pub(super) struct RemoteFinalizeInstallParts<'a> {
     pub(super) server_certificate: Option<&'a str>,
     pub(super) agent_token: &'a str,
     pub(super) login_principal: &'a str,
-    pub(super) initial_oauth_principal: Option<&'a str>,
+    pub(super) initial_user_id: Option<&'a str>,
     pub(super) mode: AgentMode,
     pub(super) inbound_ssh: bool,
 }
@@ -80,7 +80,7 @@ impl<'a> RemoteFinalizeInstall<'a> {
             server_certificate: parts.server_certificate,
             agent_token: parts.agent_token,
             login_principal: parts.login_principal,
-            initial_oauth_principal: parts.initial_oauth_principal,
+            initial_user_id: parts.initial_user_id,
             mode: parts.mode,
             inbound_ssh: parts.inbound_ssh,
         }
@@ -100,11 +100,8 @@ impl<'a> RemoteFinalizeInstall<'a> {
             sh_quote(self.login_principal),
             if self.inbound_ssh { "yes" } else { "no" }
         ));
-        if let Some(principal) = self.initial_oauth_principal {
-            install_args.push_str(&format!(
-                " --initial-oauth-principal {}",
-                sh_quote(principal)
-            ));
+        if let Some(principal) = self.initial_user_id {
+            install_args.push_str(&format!(" --initial-user-id {}", sh_quote(principal)));
         }
         let agent_refresh_token_env =
             install::agent_refresh_token_env_assignment(self.agent_token)?;
@@ -178,7 +175,7 @@ pub(super) struct LocalTargetInstall<'a> {
     inbound_ssh: bool,
     install_host_certificate: bool,
     agent_token: &'a str,
-    initial_oauth_principal: Option<&'a str>,
+    initial_user_id: Option<&'a str>,
     system_bootstrap: String,
 }
 
@@ -188,7 +185,7 @@ pub(super) struct LocalTargetInstallOptions<'a> {
     pub inbound_ssh: bool,
     pub install_host_certificate: bool,
     pub agent_token: &'a str,
-    pub initial_oauth_principal: Option<&'a str>,
+    pub initial_user_id: Option<&'a str>,
 }
 
 impl<'a> LocalTargetInstall<'a> {
@@ -199,7 +196,7 @@ impl<'a> LocalTargetInstall<'a> {
             inbound_ssh: options.inbound_ssh,
             install_host_certificate: options.install_host_certificate,
             agent_token: options.agent_token,
-            initial_oauth_principal: options.initial_oauth_principal,
+            initial_user_id: options.initial_user_id,
             system_bootstrap: system_program_bootstrap_script(false),
         }
     }
@@ -225,8 +222,8 @@ impl<'a> LocalTargetInstall<'a> {
         } else {
             "no".to_string()
         });
-        if let Some(principal) = self.initial_oauth_principal {
-            install_args.push("--initial-oauth-principal".to_string());
+        if let Some(principal) = self.initial_user_id {
+            install_args.push("--initial-user-id".to_string());
             install_args.push(principal.to_string());
         }
         system::LocalRoot::run_aegis_command(self.api_base, &install_args, self.agent_token)

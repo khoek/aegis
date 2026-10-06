@@ -3,7 +3,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use aegis_dto::v1::{
+use aegis_dto::protocol::{
     AegisDnsChange, AegisDnsConfig, AegisDnsRecordKind, AegisDnsSyncResponse, AegisSyncAction,
 };
 use anyhow::{Context, anyhow, bail};

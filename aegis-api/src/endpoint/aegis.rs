@@ -10,7 +10,7 @@ use crate::{
     config::{AegisConfig, ClientCaConfig, DirectClientCaConfig, ServerCaConfig, TlsConfig},
     firestore::{AegisDb, fetch_tls_cert_config, put_tls_cert_public_key, sync_tls_cert_configs},
 };
-use aegis_dto::v1::{
+use aegis_dto::protocol::{
     AegisAgentReport, AegisAgentStatus, AegisAliasResponse, AegisDirectClientCertRequest,
     AegisDirectClientCertResponse, AegisDirectGateway, AegisDirectGatewayConfig,
     AegisDirectGatewayInventory, AegisDirectGatewayPublishRequest, AegisDirectGatewayReport,
@@ -34,7 +34,7 @@ use aegis_dto::v1::{
 use aegis_dto::{
     AegisHostMode, DEFAULT_AEGIS_ENROLLMENT_TTL_SECONDS, HostAlias, HostAliases, HostId,
     normalize_wireguard_ipv4, normalize_wireguard_ipv6, normalize_wireguard_key,
-    v1::{
+    protocol::{
         AegisCredentialKind, AegisHostReportRequest, AgentTokenIssueResponse,
         AgentTokenRevokeRequest, SshCaPublicKeyResponse, SshIssueCertResponse,
         aegis_direct_account, aegis_direct_cert_principal, aegis_user_cert_principal,
@@ -457,7 +457,7 @@ impl CredentialSessionStore for FirestoreAuthStore {
 
 #[cfg(test)]
 mod tests_refactor {
-    use aegis_dto::v1::{
+    use aegis_dto::protocol::{
         AegisAgentHealth, AegisAgentStatus, AegisDirectClientCertRequest,
         AegisDirectClientCertResponse, AegisDirectGatewayConfig, AegisDirectGatewayInventory,
         AegisDirectGatewayPublishRequest, AegisDirectGatewayReport, AegisDirectPeerObservation,
@@ -503,7 +503,7 @@ mod tests_refactor {
     };
     use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
-        v1::{
+        protocol::{
             AegisAliasResponse, AegisEnrollment, AegisEnrollmentActivateResponse,
             AegisEnrollmentCreateRequest, AegisEnrollmentCredentialResponse,
             AegisEnrollmentHeartbeatRequest, AegisEnrollmentPhase, AegisEnrollmentPrepareRequest,
@@ -1597,7 +1597,7 @@ mod tests_refactor {
                     IpAddr::V6(_) => &mut host.observed_public_ips.ipv6,
                 };
                 if current.as_ref().map(|observed| observed.ip.as_str()) != Some(ip_text.as_str()) {
-                    *current = Some(aegis_dto::v1::AegisObservedPublicIp {
+                    *current = Some(aegis_dto::protocol::AegisObservedPublicIp {
                         ip: ip_text,
                         observed_unix,
                     });
@@ -2368,7 +2368,7 @@ mod tests_refactor {
         let mut hub = sample_host("hub-a", 10);
         hub.principal_grants = vec![AegisPrincipalGrant {
             login_principal: "ubuntu".to_string(),
-            oauth_principal: "user-1".to_string(),
+            user_id: "user-1".to_string(),
         }];
         let store = MemoryStore::with_hosts(vec![hub.clone()]);
         store
@@ -2546,7 +2546,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::OK, response.status());
-        let resolved: aegis_dto::v1::AegisAliasResponse = json_body(response).await;
+        let resolved: aegis_dto::protocol::AegisAliasResponse = json_body(response).await;
         assert_eq!(alpha_id, resolved.host_id);
 
         let response = app
@@ -2766,7 +2766,7 @@ mod tests_refactor {
                         external_principals: Vec::new(),
                     }),
                     transient: true,
-                    initial_oauth_principal: Some("operator-1".to_string()),
+                    initial_user_id: Some("operator-1".to_string()),
                     ttl_seconds: 3_600,
                 },
             ))
@@ -3129,11 +3129,11 @@ mod tests_refactor {
             principal_grants: vec![
                 AegisPrincipalGrant {
                     login_principal: "ubuntu".to_string(),
-                    oauth_principal: "user-1".to_string(),
+                    user_id: "user-1".to_string(),
                 },
                 AegisPrincipalGrant {
                     login_principal: "deploy".to_string(),
-                    oauth_principal: "OpaqueUserID".to_string(),
+                    user_id: "OpaqueUserID".to_string(),
                 },
             ],
             ssh_lockdown_enabled: true,
@@ -3162,11 +3162,11 @@ mod tests_refactor {
             vec![
                 AegisPrincipalGrant {
                     login_principal: "deploy".to_string(),
-                    oauth_principal: "OpaqueUserID".to_string(),
+                    user_id: "OpaqueUserID".to_string(),
                 },
                 AegisPrincipalGrant {
                     login_principal: "ubuntu".to_string(),
-                    oauth_principal: "user-1".to_string(),
+                    user_id: "user-1".to_string(),
                 },
             ],
             response.principal_grants
@@ -3187,7 +3187,7 @@ mod tests_refactor {
             &MemoryStore::default(),
             vec![AegisPrincipalGrant {
                 login_principal: "ubuntu".to_string(),
-                oauth_principal: "unknown-user".to_string(),
+                user_id: "unknown-user".to_string(),
             }],
         )
         .await
@@ -3205,7 +3205,7 @@ mod tests_refactor {
             &MemoryStore::default(),
             vec![AegisPrincipalGrant {
                 login_principal: "ubuntu".to_string(),
-                oauth_principal: "user@example.com".to_string(),
+                user_id: "user@example.com".to_string(),
             }],
         )
         .await
@@ -3262,15 +3262,15 @@ mod tests_refactor {
         alpha.principal_grants = vec![
             AegisPrincipalGrant {
                 login_principal: "root".to_string(),
-                oauth_principal: "other-user".to_string(),
+                user_id: "other-user".to_string(),
             },
             AegisPrincipalGrant {
                 login_principal: "ubuntu".to_string(),
-                oauth_principal: "user-1".to_string(),
+                user_id: "user-1".to_string(),
             },
             AegisPrincipalGrant {
                 login_principal: "deploy".to_string(),
-                oauth_principal: "user-1".to_string(),
+                user_id: "user-1".to_string(),
             },
         ];
         let store = MemoryStore::with_hosts(vec![alpha.clone()]);
@@ -3414,7 +3414,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::CONFLICT, response.status());
-        let error: aegis_dto::v1::ErrorResponse = json_body(response).await;
+        let error: aegis_dto::protocol::ErrorResponse = json_body(response).await;
         assert_eq!(
             "satellite gateways have not reported ready: hub-a",
             error.error
@@ -3435,7 +3435,7 @@ mod tests_refactor {
             .await
             .expect("request should succeed");
         assert_eq!(StatusCode::OK, response.status());
-        let hub: aegis_dto::v1::AegisDirectGateway = json_body(response).await;
+        let hub: aegis_dto::protocol::AegisDirectGateway = json_body(response).await;
         assert_eq!("10.77.1.1", hub.wireguard.ipv4);
         assert_eq!("fd77::1:1", hub.wireguard.ipv6);
         assert_eq!(
@@ -4391,7 +4391,7 @@ mod tests_refactor {
             )
             .expect("network member should seed");
         let app = test_app(store.clone());
-        let body = aegis_dto::v1::AegisEgressIdentityRequest {
+        let body = aegis_dto::protocol::AegisEgressIdentityRequest {
             public_key: TEST_GATEWAY_WIREGUARD_KEY.to_string(),
         };
         let response = app
@@ -5106,7 +5106,7 @@ where
             state.cfg.egress.network
         ))
     })?;
-    let internal_pool = aegis_dto::v1::AegisWireGuardAddressPool {
+    let internal_pool = aegis_dto::protocol::AegisWireGuardAddressPool {
         subnet_ipv4: mesh.subnet_ipv4.clone(),
         subnet_ipv6: mesh.subnet_ipv6.clone(),
     };
@@ -5947,7 +5947,7 @@ where
         let mut login_principals = host
             .principal_grants
             .iter()
-            .filter(|grant| grant.oauth_principal == owner.user_id)
+            .filter(|grant| grant.user_id == owner.user_id)
             .map(|grant| grant.login_principal.clone())
             .collect::<Vec<_>>();
         login_principals.sort();
@@ -6187,10 +6187,10 @@ where
         ssh.external_principals = normalize_external_ssh_principals(&ssh.external_principals)?;
     }
     let initial_user_id = request
-        .initial_oauth_principal
+        .initial_user_id
         .as_deref()
         .unwrap_or_else(|| admin.principal());
-    let initial_oauth_principal = resolve_active_aegis_user(&state.store, initial_user_id)
+    let initial_user_id = resolve_active_aegis_user(&state.store, initial_user_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest(format!("unknown Aegis user id `{initial_user_id}`")))?
         .user_id;
@@ -6207,7 +6207,7 @@ where
         mode: request.mode,
         ssh: request.ssh,
         transient: request.transient,
-        initial_oauth_principal,
+        initial_user_id,
         phase: AegisEnrollmentPhase::AwaitingMachine,
         credential_session_id: None,
         created_unix: now_unix,
@@ -7056,7 +7056,7 @@ where
     let mut cert_principals = host
         .principal_grants
         .iter()
-        .filter(|grant| grant.oauth_principal == identity.user_id)
+        .filter(|grant| grant.user_id == identity.user_id)
         .map(|grant| aegis_user_cert_principal(&host_id, &grant.login_principal, &identity.user_id))
         .collect::<Vec<_>>();
     cert_principals.sort();
@@ -7564,7 +7564,7 @@ fn enrollment_response(record: AegisEnrollmentRecord) -> AegisEnrollment {
         mode: record.mode,
         ssh: record.ssh,
         transient: record.transient,
-        initial_oauth_principal: record.initial_oauth_principal,
+        initial_user_id: record.initial_user_id,
         phase: record.phase,
         credential_issued: record.credential_session_id.is_some(),
         created_unix: record.created_unix,
@@ -7726,7 +7726,7 @@ fn host_summary_from_record(record: AegisHostRecord) -> Result<AegisHost, ApiErr
             external_principals: ssh.external_principals,
         }),
         egress: egress_public_key.map(|public_key| AegisHostEgress { public_key }),
-        report: aegis_dto::v1::AegisHostReport {
+        report: aegis_dto::protocol::AegisHostReport {
             messages,
             agent,
             ssh_lockdown_enabled: record.ssh_lockdown_enabled.unwrap_or(false),
@@ -7778,7 +7778,7 @@ fn network_member_summary_from_record(
     };
     let internal = match (record.internal_ipv4, record.internal_ipv6) {
         (Some(ipv4), Some(ipv6)) => {
-            Some(aegis_dto::v1::AegisNetworkMemberInternalAddresses { ipv4, ipv6 })
+            Some(aegis_dto::protocol::AegisNetworkMemberInternalAddresses { ipv4, ipv6 })
         }
         (None, None) => None,
         (ipv4, ipv6) => {
@@ -8192,7 +8192,7 @@ fn normalize_agent_report(
     }
     Ok(AegisAgentStatus {
         version,
-        health: aegis_dto::v1::AegisAgentHealth {
+        health: aegis_dto::protocol::AegisAgentHealth {
             boot_id: boot_id.to_string(),
             reconciled_since_boot: report.health.reconciled_since_boot,
             applied_aliases: report.health.applied_aliases,
@@ -8261,7 +8261,7 @@ where
     for grant in grants {
         let login_principal = grant.login_principal.trim();
         validate_login_principal(login_principal)?;
-        let user_id = grant.oauth_principal;
+        let user_id = grant.user_id;
         if user_ids.insert(user_id.clone()) {
             resolve_aegis_user(store, &user_id).await?.ok_or_else(|| {
                 ApiError::BadRequest(format!("unknown Aegis user id `{user_id}`"))
@@ -8269,7 +8269,7 @@ where
         }
         let normalized = AegisPrincipalGrant {
             login_principal: login_principal.to_string(),
-            oauth_principal: user_id,
+            user_id,
         };
         if !out.iter().any(|existing| existing == &normalized) {
             out.push(normalized);

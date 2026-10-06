@@ -1,4 +1,4 @@
-use aegis_dto::{AegisHostMode, HostId, v1::AegisNetworkConfig};
+use aegis_dto::{AegisHostMode, HostId, protocol::AegisNetworkConfig};
 use anyhow::{Context, Result, bail, ensure};
 use capulus::shell::shell_quote as sh_quote;
 

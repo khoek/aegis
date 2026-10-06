@@ -19,8 +19,7 @@ use std::{
 
 use aegis_dto::{
     AegisHostMode, DEFAULT_AEGIS_NETWORK, HostAlias, HostAliases, HostId,
-    sshd_install_dropin_contents,
-    v1::{
+    protocol::{
         AegisAgentHealth, AegisAgentStatus, AegisDirectClientCertRequest,
         AegisDirectClientCertResponse, AegisDirectGateway, AegisDirectGatewayConfig,
         AegisDirectGatewayPublishRequest, AegisDirectGatewayReport, AegisDirectPeerObservation,
@@ -32,6 +31,7 @@ use aegis_dto::{
         AegisNetworkMemberInternalAddresses, AegisNetworkWireGuardConfig, AegisPrincipalGrant,
         AegisPutNetworkMemberRequest, AegisPutNetworkMemberWireGuard, aegis_user_cert_principal,
     },
+    sshd_install_dropin_contents,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use axum::{
@@ -1424,18 +1424,18 @@ async fn mutate_principal_grants(
 ) -> Result<Json<PrincipalGrantResponse>, AgentHttpError> {
     run_blocking(move || {
         let login_principal = login_principal_from_peer(&peer)?;
-        let oauth_principal = crate::principal_grants::validate_user_id(&user_id)?;
+        let user_id = crate::principal_grants::validate_user_id(&user_id)?;
         let grant = AegisPrincipalGrant {
             login_principal: login_principal.clone(),
-            oauth_principal,
+            user_id,
         };
         let mut store = crate::principal_grants::PrincipalGrantStore::load()?;
         match mutation {
             PrincipalGrantMutation::Allow => {
-                store.allow(&grant.login_principal, &grant.oauth_principal)?;
+                store.allow(&grant.login_principal, &grant.user_id)?;
             }
             PrincipalGrantMutation::Revoke => {
-                store.revoke(&grant.login_principal, &grant.oauth_principal)?;
+                store.revoke(&grant.login_principal, &grant.user_id)?;
             }
         }
         let store = store.commit_validated_with(
@@ -3131,8 +3131,7 @@ fn authorized_principals_by_login_principal(
 ) -> BTreeMap<String, Vec<String>> {
     let mut grouped = BTreeMap::<String, Vec<String>>::new();
     for grant in principal_grants {
-        let principal =
-            aegis_user_cert_principal(host_id, &grant.login_principal, &grant.oauth_principal);
+        let principal = aegis_user_cert_principal(host_id, &grant.login_principal, &grant.user_id);
         let principals = grouped.entry(grant.login_principal.clone()).or_default();
         if !principals.contains(&principal) {
             principals.push(principal);
@@ -7145,7 +7144,7 @@ mod tests {
     #[test]
     fn direct_target_cache_serves_menu_without_a_network_request() {
         let cache = super::DirectTargetCache::default();
-        let targets = aegis_dto::v1::AegisDirectTargetListResponse {
+        let targets = aegis_dto::protocol::AegisDirectTargetListResponse {
             targets: Vec::new(),
         };
         assert_eq!(
@@ -7197,7 +7196,7 @@ mod tests {
     use crate::config::{AgentConfig, AgentConfigOptions, AgentHostConfig};
     use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
-        v1::{
+        protocol::{
             AegisDirectGateway, AegisDirectGatewayConfig, AegisDirectGatewayReport,
             AegisDirectPeerObservation, AegisDirectSatellite, AegisDirectWireGuard,
             AegisEgressConfig, AegisEgressHost, AegisEgressInventory, AegisEgressPolicy,
@@ -7420,7 +7419,7 @@ config_path = "/etc/bird/bird.conf"
                 messages: Vec::new(),
                 agent: None,
                 ssh_lockdown_enabled: false,
-                observed_public_ips: aegis_dto::v1::AegisObservedPublicIps::default(),
+                observed_public_ips: aegis_dto::protocol::AegisObservedPublicIps::default(),
                 transient: false,
                 pending,
                 updated_unix: 0,

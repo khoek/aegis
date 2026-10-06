@@ -338,8 +338,8 @@ fn advanced_command_system_lock_policy(command: &AdvancedCommands) -> SystemLock
 }
 
 fn cached_network_members_from_response(
-    hosts: aegis_dto::v1::AegisHostListResponse,
-    response: aegis_dto::v1::AegisNetworkMemberListResponse,
+    hosts: aegis_dto::protocol::AegisHostListResponse,
+    response: aegis_dto::protocol::AegisNetworkMemberListResponse,
 ) -> Result<Vec<CachedHost>> {
     response
         .members
@@ -354,7 +354,7 @@ fn cached_network_members_from_response(
             Ok(CachedHost {
                 host_id,
                 aliases,
-                host: aegis_dto::v1::AegisNetworkHost::resolve(host, member),
+                host: aegis_dto::protocol::AegisNetworkHost::resolve(host, member),
             })
         })
         .collect()
@@ -749,7 +749,7 @@ struct EnrollApi {
 }
 
 impl EnrollApi {
-    fn load(invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse) -> Result<Self> {
+    fn load(invitation: &aegis_dto::protocol::AegisEnrollmentCredentialResponse) -> Result<Self> {
         let client = HostAgentApiClient::from_refresh_token(
             &invitation.api_base,
             &invitation.refresh_token,
@@ -764,7 +764,7 @@ impl EnrollApi {
         self.client.host_id()
     }
 
-    fn credential_kind(&self) -> aegis_dto::v1::AegisCredentialKind {
+    fn credential_kind(&self) -> aegis_dto::protocol::AegisCredentialKind {
         self.client.credential_kind()
     }
 
@@ -772,13 +772,14 @@ impl EnrollApi {
         self.client.refresh_token()
     }
 
-    fn enrollment(&mut self) -> Result<aegis_dto::v1::AegisEnrollment> {
+    fn enrollment(&mut self) -> Result<aegis_dto::protocol::AegisEnrollment> {
         self.client.get_enrollment()
     }
 
-    fn heartbeat(&mut self, phase: aegis_dto::v1::AegisEnrollmentPhase) -> Result<()> {
-        self.client
-            .heartbeat_enrollment(&aegis_dto::v1::AegisEnrollmentHeartbeatRequest { phase })?;
+    fn heartbeat(&mut self, phase: aegis_dto::protocol::AegisEnrollmentPhase) -> Result<()> {
+        self.client.heartbeat_enrollment(
+            &aegis_dto::protocol::AegisEnrollmentHeartbeatRequest { phase },
+        )?;
         Ok(())
     }
 
@@ -786,16 +787,16 @@ impl EnrollApi {
         &mut self,
         identity: &EnrollTargetIdentity,
         wireguard_endpoints: Vec<String>,
-    ) -> Result<aegis_dto::v1::AegisEnrollmentPrepareResponse> {
+    ) -> Result<aegis_dto::protocol::AegisEnrollmentPrepareResponse> {
         self.client
-            .prepare_enrollment(&aegis_dto::v1::AegisEnrollmentPrepareRequest {
+            .prepare_enrollment(&aegis_dto::protocol::AegisEnrollmentPrepareRequest {
                 host_public_key: identity.host_public_key.clone(),
                 wireguard_public_key: identity.wireguard_public_key.clone(),
                 wireguard_endpoints,
             })
     }
 
-    fn activate(&mut self) -> Result<aegis_dto::v1::AegisEnrollmentActivateResponse> {
+    fn activate(&mut self) -> Result<aegis_dto::protocol::AegisEnrollmentActivateResponse> {
         self.client.activate_enrollment()
     }
 }
@@ -857,7 +858,7 @@ fn run_enroll(api_base_override: Option<&str>, args: &EnrollArgs) -> Result<i32>
 }
 
 fn run_enroll_invitation(
-    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::protocol::AegisEnrollmentCredentialResponse,
     plan: &EnrollmentPlan,
 ) -> Result<i32> {
     if matches!(plan.target, EnrollTarget::Local(_))
@@ -948,7 +949,7 @@ impl EnrollmentProgress {
 }
 
 fn run_enroll_with_target(
-    invitation: &aegis_dto::v1::AegisEnrollmentCredentialResponse,
+    invitation: &aegis_dto::protocol::AegisEnrollmentCredentialResponse,
     plan: &EnrollmentPlan,
     remote_session: Option<&dyn remote::RemoteBootstrapSession>,
 ) -> Result<i32> {
@@ -962,7 +963,7 @@ fn run_enroll_with_target(
         visibility: TaskVisibility::Immediate,
         ..TaskOptions::default()
     })?;
-    if api.credential_kind() == aegis_dto::v1::AegisCredentialKind::Agent {
+    if api.credential_kind() == aegis_dto::protocol::AegisCredentialKind::Agent {
         return recover_activated_enrollment(&api_base, &api, plan, remote_session, workflow);
     }
 
@@ -986,7 +987,7 @@ fn run_enroll_with_target(
     let mut progress = EnrollmentProgress::new();
 
     let result = (|| -> Result<i32> {
-        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::PreparingMachine)?;
+        api.heartbeat(aegis_dto::protocol::AegisEnrollmentPhase::PreparingMachine)?;
         let identity = prepare_enroll_target_identity(
             target,
             remote_session,
@@ -1001,7 +1002,10 @@ fn run_enroll_with_target(
         let pending_host = CachedHost {
             host_id,
             aliases: prepared.host.aliases.clone(),
-            host: aegis_dto::v1::AegisNetworkHost::resolve(prepared.host.clone(), pending_member),
+            host: aegis_dto::protocol::AegisNetworkHost::resolve(
+                prepared.host.clone(),
+                pending_member,
+            ),
         };
         host::host_wireguard_identity(&pending_host)?;
         prepared.network.mesh.as_ref().ok_or_else(|| {
@@ -1040,7 +1044,7 @@ fn run_enroll_with_target(
             )?;
         }
 
-        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::InstallingAgent)?;
+        api.heartbeat(aegis_dto::protocol::AegisEnrollmentPhase::InstallingAgent)?;
         workflow.set_phase(format!("installing Aegis on {target_label}"));
         match target {
             EnrollTarget::Local(_) => {
@@ -1050,7 +1054,7 @@ fn run_enroll_with_target(
                     inbound_ssh: enrollment.ssh.is_some(),
                     install_host_certificate: server_certificate.is_some(),
                     agent_token: &target_agent_token,
-                    initial_oauth_principal: Some(&enrollment.initial_oauth_principal),
+                    initial_user_id: Some(&enrollment.initial_user_id),
                 })
                 .run()?
             }
@@ -1064,7 +1068,7 @@ fn run_enroll_with_target(
                         server_certificate,
                         agent_token: &target_agent_token,
                         login_principal: &remote.login_principal,
-                        initial_oauth_principal: Some(&enrollment.initial_oauth_principal),
+                        initial_user_id: Some(&enrollment.initial_user_id),
                         mode: agent_mode_from_host_mode(enrollment.mode),
                         inbound_ssh: enrollment.ssh.is_some(),
                     },
@@ -1079,7 +1083,7 @@ fn run_enroll_with_target(
             }
         }
 
-        api.heartbeat(aegis_dto::v1::AegisEnrollmentPhase::Activating)?;
+        api.heartbeat(aegis_dto::protocol::AegisEnrollmentPhase::Activating)?;
         workflow.set_phase("activating host in the Aegis control plane");
         progress.begin_activation();
         let activated = api.activate()?;
@@ -1126,8 +1130,8 @@ fn run_enroll_with_target(
 }
 
 fn validate_prepared_enrollment(
-    expected: &aegis_dto::v1::AegisEnrollment,
-    prepared: &aegis_dto::v1::AegisEnrollmentPrepareResponse,
+    expected: &aegis_dto::protocol::AegisEnrollment,
+    prepared: &aegis_dto::protocol::AegisEnrollmentPrepareResponse,
 ) -> Result<()> {
     if prepared.enrollment.host_id != expected.host_id
         || prepared.member.host_id != expected.host_id
@@ -1148,7 +1152,7 @@ fn validate_prepared_enrollment(
 
 fn validate_activation_response(
     host_id: HostId,
-    activated: &aegis_dto::v1::AegisEnrollmentActivateResponse,
+    activated: &aegis_dto::protocol::AegisEnrollmentActivateResponse,
 ) -> Result<()> {
     if activated.member.host_id != host_id
         || activated.host.pending
@@ -1522,7 +1526,7 @@ mod tests {
     use crate::config::{CachedHost, now_unix};
     use aegis_dto::{
         AegisHostMode, HostAlias, HostAliases, HostId,
-        v1::{
+        protocol::{
             AegisAgentHealth, AegisAgentStatus, AegisHostMessage, AegisHostMessageLevel,
             AegisMeshConfig, AegisNetworkConfig, AegisNetworkHostSsh,
             AegisNetworkMemberInternalAddresses, AegisNetworkMemberWireGuard,
@@ -1564,7 +1568,7 @@ mod tests {
         CachedHost {
             host_id: host_id("alpha"),
             aliases: aliases("alpha"),
-            host: aegis_dto::v1::AegisNetworkHost {
+            host: aegis_dto::protocol::AegisNetworkHost {
                 mode: AegisHostMode::Leaf,
                 ssh: Some(AegisNetworkHostSsh {
                     port: Some(22),
@@ -1586,7 +1590,7 @@ mod tests {
                 messages: Vec::new(),
                 agent: Some(sample_agent_status(env!("CARGO_PKG_VERSION"), now_unix())),
                 ssh_lockdown_enabled: false,
-                observed_public_ips: aegis_dto::v1::AegisObservedPublicIps::default(),
+                observed_public_ips: aegis_dto::protocol::AegisObservedPublicIps::default(),
                 transient: false,
                 pending: false,
                 updated_unix: 1,
@@ -1949,7 +1953,7 @@ mod tests {
             user: None,
             inbound_ssh: None,
             host_id: None,
-            initial_oauth_principal: None,
+            initial_user_id: None,
             staged_enrollment: false,
         };
 
@@ -2268,7 +2272,7 @@ mod tests {
                 server_certificate: None,
                 agent_token: "agent-token",
                 login_principal: "ubuntu",
-                initial_oauth_principal: Some("operator"),
+                initial_user_id: Some("operator"),
                 mode: AgentMode::Hub,
                 inbound_ssh: false,
             },
@@ -3107,7 +3111,7 @@ mod tests {
                 user: None,
                 inbound_ssh: None,
                 host_id: None,
-                initial_oauth_principal: None,
+                initial_user_id: None,
                 staged_enrollment: false,
             }),
         });

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use aegis_dto::v1::AegisPrincipalGrant;
+use aegis_dto::protocol::AegisPrincipalGrant;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -40,9 +40,9 @@ impl PrincipalGrantStore {
     pub(crate) fn allow(
         &mut self,
         login_principal: &str,
-        oauth_principal: &str,
+        user_id: &str,
     ) -> Result<AegisPrincipalGrant> {
-        let grant = normalized_grant(login_principal, oauth_principal)?;
+        let grant = normalized_grant(login_principal, user_id)?;
         if !self.grants.iter().any(|existing| existing == &grant) {
             self.grants.push(grant.clone());
             self.grants.sort();
@@ -53,9 +53,9 @@ impl PrincipalGrantStore {
     pub(crate) fn revoke(
         &mut self,
         login_principal: &str,
-        oauth_principal: &str,
+        user_id: &str,
     ) -> Result<AegisPrincipalGrant> {
-        let grant = normalized_grant(login_principal, oauth_principal)?;
+        let grant = normalized_grant(login_principal, user_id)?;
         self.grants.retain(|existing| existing != &grant);
         Ok(grant)
     }
@@ -104,19 +104,19 @@ pub(crate) fn validate_user_id(value: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
-fn normalized_grant(login_principal: &str, oauth_principal: &str) -> Result<AegisPrincipalGrant> {
+fn normalized_grant(login_principal: &str, user_id: &str) -> Result<AegisPrincipalGrant> {
     let login_principal = login_principal.trim();
     validate_login_principal(login_principal)?;
     Ok(AegisPrincipalGrant {
         login_principal: login_principal.to_string(),
-        oauth_principal: validate_user_id(oauth_principal)?,
+        user_id: validate_user_id(user_id)?,
     })
 }
 
 fn normalize(grants: Vec<AegisPrincipalGrant>) -> Result<Vec<AegisPrincipalGrant>> {
     let mut out = Vec::new();
     for grant in grants {
-        let normalized = normalized_grant(&grant.login_principal, &grant.oauth_principal)?;
+        let normalized = normalized_grant(&grant.login_principal, &grant.user_id)?;
         if !out.iter().any(|existing| existing == &normalized) {
             out.push(normalized);
         }
@@ -143,7 +143,7 @@ mod tests {
 
         assert_eq!(1, store.grants.len());
         assert_eq!("ubuntu", store.grants[0].login_principal);
-        assert_eq!("OpaqueUserID", store.grants[0].oauth_principal);
+        assert_eq!("OpaqueUserID", store.grants[0].user_id);
     }
 
     #[test]
@@ -169,13 +169,13 @@ mod tests {
             .expect("existing grant should validate");
         assert!(
             store
-                .reconcile(vec![aegis_dto::v1::AegisPrincipalGrant {
+                .reconcile(vec![aegis_dto::protocol::AegisPrincipalGrant {
                     login_principal: "ubuntu".to_string(),
-                    oauth_principal: "OpaqueUserID".to_string(),
+                    user_id: "OpaqueUserID".to_string(),
                 }])
                 .expect("canonical grants should validate")
         );
-        assert_eq!("OpaqueUserID", store.grants[0].oauth_principal);
+        assert_eq!("OpaqueUserID", store.grants[0].user_id);
         assert!(
             !store
                 .reconcile(store.grants.clone())

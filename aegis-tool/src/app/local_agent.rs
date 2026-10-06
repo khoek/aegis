@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use aegis_dto::{
     layout::AGENT_CONFIG_PATH,
-    v1::{
+    protocol::{
         AegisDirectClientCertRequest, AegisDirectClientCertResponse, AegisDirectTargetListResponse,
         AegisPrincipalGrant,
     },

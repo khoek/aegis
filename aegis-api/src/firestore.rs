@@ -11,7 +11,7 @@ use aegis_dto::configuration::*;
 use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases, HostId, WireGuardAddressError, WireGuardHostIdentity,
     allocate_lowest_free_wireguard_host_id,
-    v1::{
+    protocol::{
         AegisAgentStatus, AegisEnrollmentPhase, AegisEnrollmentSsh, AegisHostMessage,
         AegisObservedPublicIp, AegisObservedPublicIps, AegisPrincipalGrant, AegisSyncAction,
         AegisTlsChange, AegisTlsDesiredState, AegisTlsSyncResponse, AegisWireGuardAddressPool,
@@ -19,8 +19,6 @@ use aegis_dto::{
     wireguard_host_identity_from_addresses, wireguard_ipv4_for_host_id, wireguard_ipv6_for_host_id,
 };
 use anyhow::Context;
-#[cfg(test)]
-use chrono::Utc;
 use firestore::{
     FirestoreConsistencySelector, FirestoreDb, FirestoreDocument, FirestoreTransaction,
     FirestoreTransactionOps, FirestoreWritePrecondition, errors::FirestoreError,
@@ -135,13 +133,6 @@ struct StoredServerCaConfig {
     passphrase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cert_ttl_seconds: Option<u64>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[cfg(test)]
-struct StoredSshConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    created_unix: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -317,7 +308,7 @@ async fn load_client_ca_config(db: &AegisDb) -> anyhow::Result<ClientCaConfig> {
         SSH_USER_CA_DOC,
     )
     .await?
-    .ok_or_else(|| anyhow::anyhow!("v2/aegis/ssh/config/cas/user is required"))?;
+    .ok_or_else(|| anyhow::anyhow!("SSH user CA is required"))?;
     validate_client_ca_config(stored)
 }
 
@@ -330,13 +321,13 @@ async fn load_server_ca_config(db: &AegisDb) -> anyhow::Result<ServerCaConfig> {
         SSH_HOST_CA_DOC,
     )
     .await?
-    .ok_or_else(|| anyhow::anyhow!("v2/aegis/ssh/config/cas/host is required"))?;
+    .ok_or_else(|| anyhow::anyhow!("SSH host CA is required"))?;
     validate_server_ca_config(stored)
 }
 
 async fn load_tls_config(db: &AegisDb) -> anyhow::Result<TlsConfig> {
     let parent = aegis_tls_parent(db)?;
-    let root_path = "v2/aegis/tls/config/cas/root";
+    let root_path = "TLS root CA";
     let root = load_optional_typed_at::<StoredTlsCaConfig>(
         db.inner(),
         &parent,
@@ -345,7 +336,7 @@ async fn load_tls_config(db: &AegisDb) -> anyhow::Result<TlsConfig> {
     )
     .await?
     .ok_or_else(|| anyhow::anyhow!("{root_path} is required"))?;
-    let issuing_path = "v2/aegis/tls/config/cas/issuing";
+    let issuing_path = "TLS issuing CA";
     let issuing = load_optional_typed_at::<StoredTlsCaConfig>(
         db.inner(),
         &parent,
@@ -433,15 +424,12 @@ fn default_tls_issuing_ca_document(
 }
 
 fn validate_client_ca_config(stored: StoredClientCaConfig) -> anyhow::Result<ClientCaConfig> {
-    let private_key_pem = normalized_text(stored.private_key_pem.as_ref()).ok_or_else(|| {
-        anyhow::anyhow!("v2/aegis/ssh/config/cas/user.private_key_pem is required")
-    })?;
+    let private_key_pem = normalized_text(stored.private_key_pem.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("SSH user CA.private_key_pem is required"))?;
     let cert_ttl_seconds = stored
         .cert_ttl_seconds
         .filter(|ttl| *ttl > 0)
-        .ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis/ssh/config/cas/user.cert_ttl_seconds is required")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("SSH user CA.cert_ttl_seconds is required"))?;
     Ok(ClientCaConfig {
         private_key_pem: private_key_pem.to_string(),
         passphrase: stored.passphrase.filter(|value| !value.trim().is_empty()),
@@ -452,9 +440,8 @@ fn validate_client_ca_config(stored: StoredClientCaConfig) -> anyhow::Result<Cli
 fn validate_direct_client_ca_config(
     stored: StoredDirectClientCaConfig,
 ) -> anyhow::Result<DirectClientCaConfig> {
-    let private_key_pem = normalized_text(stored.private_key_pem.as_ref()).ok_or_else(|| {
-        anyhow::anyhow!("v2/aegis/ssh/config/cas/direct.private_key_pem is required")
-    })?;
+    let private_key_pem = normalized_text(stored.private_key_pem.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("SSH direct-device CA.private_key_pem is required"))?;
     Ok(DirectClientCaConfig {
         private_key_pem: private_key_pem.to_string(),
         passphrase: stored.passphrase.filter(|value| !value.trim().is_empty()),
@@ -462,15 +449,12 @@ fn validate_direct_client_ca_config(
 }
 
 fn validate_server_ca_config(stored: StoredServerCaConfig) -> anyhow::Result<ServerCaConfig> {
-    let private_key_pem = normalized_text(stored.private_key_pem.as_ref()).ok_or_else(|| {
-        anyhow::anyhow!("v2/aegis/ssh/config/cas/host.private_key_pem is required")
-    })?;
+    let private_key_pem = normalized_text(stored.private_key_pem.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("SSH host CA.private_key_pem is required"))?;
     let cert_ttl_seconds = stored
         .cert_ttl_seconds
         .filter(|ttl| *ttl > 0)
-        .ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis/ssh/config/cas/host.cert_ttl_seconds is required")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("SSH host CA.cert_ttl_seconds is required"))?;
     Ok(ServerCaConfig {
         private_key_pem: private_key_pem.to_string(),
         passphrase: stored.passphrase.filter(|value| !value.trim().is_empty()),
@@ -507,19 +491,18 @@ fn validate_tls_cert_config(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     if dns_names.is_empty() {
-        anyhow::bail!("v2/aegis/tls/config/certs/{label}.dns_names must not be empty");
+        anyhow::bail!("TLS certificate {label}.dns_names must not be empty");
     }
     let mut sorted_dns_names = dns_names;
     sorted_dns_names.sort();
     sorted_dns_names.dedup();
     let host_id = stored
         .host_id
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis/tls/config/certs/{label}.host_id is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("TLS certificate {label}.host_id is required"))?;
     let public_key_pem = normalized_text(stored.public_key_pem.as_ref()).map(str::to_string);
     if let Some(public_key_pem) = public_key_pem.as_ref() {
-        SubjectPublicKeyInfo::from_pem(public_key_pem).with_context(|| {
-            format!("v2/aegis/tls/config/certs/{label}.public_key_pem failed to parse")
-        })?;
+        SubjectPublicKeyInfo::from_pem(public_key_pem)
+            .with_context(|| format!("TLS certificate {label}.public_key_pem failed to parse"))?;
     }
     Ok(TlsCertRecord {
         label: label.to_string(),
@@ -555,49 +538,6 @@ fn validate_tls_dns_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-async fn ensure_client_ca_config(db: &AegisDb) -> anyhow::Result<ClientCaConfig> {
-    ensure_ssh_parent_config(db).await?;
-    let parent = aegis_ssh_parent(db)?;
-    for attempt in 0..CONFIG_BOOTSTRAP_MAX_RETRIES {
-        if let Some(stored) = load_optional_typed_at::<StoredClientCaConfig>(
-            db.inner(),
-            &parent,
-            SSH_CAS_COLLECTION,
-            SSH_USER_CA_DOC,
-        )
-        .await?
-        {
-            return validate_client_ca_config(stored);
-        }
-
-        let stored = default_client_ca_document()?;
-        tracing::warn!(
-            "missing v2/aegis/ssh/config/cas/user; creating a bootstrap document with a generated user SSH CA keypair"
-        );
-        match db
-            .create_typed_at(&parent, SSH_CAS_COLLECTION, SSH_USER_CA_DOC, &stored)
-            .await
-        {
-            Ok(()) => return validate_client_ca_config(stored),
-            Err(error)
-                if should_retry_bootstrap_conflict(
-                    &error,
-                    "v2/aegis/ssh/config/cas/user",
-                    attempt,
-                ) =>
-            {
-                continue;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    anyhow::bail!(
-        "v2/aegis/ssh/config/cas/user bootstrap did not converge after {CONFIG_BOOTSTRAP_MAX_RETRIES} attempts"
-    )
-}
-
 async fn load_direct_client_ca_config(db: &AegisDb) -> anyhow::Result<DirectClientCaConfig> {
     let parent = aegis_ssh_parent(db)?;
     let stored = load_optional_typed_at::<StoredDirectClientCaConfig>(
@@ -607,46 +547,8 @@ async fn load_direct_client_ca_config(db: &AegisDb) -> anyhow::Result<DirectClie
         SSH_DIRECT_CA_DOC,
     )
     .await?
-    .ok_or_else(|| anyhow::anyhow!("v2/aegis/ssh/config/cas/direct is required"))?;
+    .ok_or_else(|| anyhow::anyhow!("SSH direct-device CA is required"))?;
     validate_direct_client_ca_config(stored)
-}
-
-#[cfg(test)]
-async fn ensure_ssh_parent_config(db: &AegisDb) -> anyhow::Result<()> {
-    let parent = aegis_parent(db)?;
-    for attempt in 0..CONFIG_BOOTSTRAP_MAX_RETRIES {
-        if load_optional_typed_at::<StoredSshConfig>(
-            db.inner(),
-            &parent,
-            AEGIS_SSH_COLLECTION,
-            AEGIS_SSH_DOC,
-        )
-        .await?
-        .is_some()
-        {
-            return Ok(());
-        }
-        let stored = StoredSshConfig {
-            created_unix: Some(Utc::now().timestamp()),
-        };
-        tracing::warn!("missing v2/aegis/ssh/config; creating SSH parent document");
-        match db
-            .create_typed_at(&parent, AEGIS_SSH_COLLECTION, AEGIS_SSH_DOC, &stored)
-            .await
-        {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if should_retry_bootstrap_conflict(&error, "v2/aegis/ssh/config", attempt) =>
-            {
-                continue;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    anyhow::bail!(
-        "v2/aegis/ssh/config bootstrap did not converge after {CONFIG_BOOTSTRAP_MAX_RETRIES} attempts"
-    )
 }
 
 pub async fn fetch_tls_cert_config(
@@ -1196,7 +1098,7 @@ struct StoredAegisEnrollment {
     ssh: Option<AegisEnrollmentSsh>,
     #[serde(default)]
     transient: bool,
-    initial_oauth_principal: String,
+    initial_user_id: String,
     phase: AegisEnrollmentPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     credential_session_id: Option<String>,
@@ -1224,7 +1126,7 @@ struct StoredAegisNetworkMemberRecord {
 #[serde(deny_unknown_fields)]
 struct StoredAegisEgressState {
     generation: u64,
-    policies: BTreeMap<HostId, aegis_dto::v1::AegisEgressPolicy>,
+    policies: BTreeMap<HostId, aegis_dto::protocol::AegisEgressPolicy>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1250,7 +1152,7 @@ fn default_aegis_host_port() -> Option<u16> {
 }
 
 fn stored_direct_gateway_report(
-    report: &aegis_dto::v1::AegisDirectGatewayReport,
+    report: &aegis_dto::protocol::AegisDirectGatewayReport,
 ) -> StoredAegisDirectGatewayReport {
     StoredAegisDirectGatewayReport {
         observed_unix: report.observed_unix,
@@ -1267,13 +1169,13 @@ fn stored_direct_gateway_report(
 
 fn domain_direct_gateway_report(
     report: StoredAegisDirectGatewayReport,
-) -> aegis_dto::v1::AegisDirectGatewayReport {
-    aegis_dto::v1::AegisDirectGatewayReport {
+) -> aegis_dto::protocol::AegisDirectGatewayReport {
+    aegis_dto::protocol::AegisDirectGatewayReport {
         observed_unix: report.observed_unix,
         peers: report
             .peers
             .into_iter()
-            .map(|peer| aegis_dto::v1::AegisDirectPeerObservation {
+            .map(|peer| aegis_dto::protocol::AegisDirectPeerObservation {
                 public_key: peer.public_key,
                 latest_handshake_unix: peer.latest_handshake_unix,
             })
@@ -1356,7 +1258,7 @@ fn stored_aegis_enrollment(enrollment: &AegisEnrollmentRecord) -> StoredAegisEnr
         mode: enrollment.mode,
         ssh: enrollment.ssh.clone(),
         transient: enrollment.transient,
-        initial_oauth_principal: enrollment.initial_oauth_principal.clone(),
+        initial_user_id: enrollment.initial_user_id.clone(),
         phase: enrollment.phase,
         credential_session_id: enrollment.credential_session_id.clone(),
         created_unix: enrollment.created_unix,
@@ -1377,7 +1279,7 @@ fn domain_aegis_enrollment(
         mode: stored.mode,
         ssh: stored.ssh,
         transient: stored.transient,
-        initial_oauth_principal: stored.initial_oauth_principal,
+        initial_user_id: stored.initial_user_id,
         phase: stored.phase,
         credential_session_id: stored.credential_session_id,
         created_unix: stored.created_unix,
@@ -2494,7 +2396,7 @@ impl AegisStore for AegisDb {
     async fn fetch_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
-    ) -> anyhow::Result<Option<aegis_dto::v1::AegisEgressPolicy>> {
+    ) -> anyhow::Result<Option<aegis_dto::protocol::AegisEgressPolicy>> {
         let state = fetch_aegis_egress_state(self, &aegis_parent(self)?).await?;
         Ok(state.policies.get(source_host_id).cloned())
     }
@@ -2504,7 +2406,7 @@ impl AegisStore for AegisDb {
         source_host_id: &HostId,
         expected_generation: u64,
         expected_revision: Option<u64>,
-        replacement: Option<&aegis_dto::v1::AegisEgressPolicy>,
+        replacement: Option<&aegis_dto::protocol::AegisEgressPolicy>,
     ) -> Result<(), AegisEgressWriteError> {
         if replacement.is_some_and(|policy| policy.source_host_id != *source_host_id) {
             return Err(AegisEgressWriteError::Internal(anyhow::anyhow!(
@@ -2856,7 +2758,7 @@ impl AegisStore for AegisDb {
         &self,
         network: &str,
         member: &AegisNetworkMemberRecord,
-        config: &aegis_dto::v1::AegisNetworkConfig,
+        config: &aegis_dto::protocol::AegisNetworkConfig,
     ) -> Result<AegisNetworkMemberRecord, AegisHostWriteError> {
         update_aegis_network_member_record(self, network, member, config).await
     }
@@ -3520,7 +3422,7 @@ async fn update_aegis_network_member_record(
     db: &AegisDb,
     network: &str,
     member: &AegisNetworkMemberRecord,
-    config: &aegis_dto::v1::AegisNetworkConfig,
+    config: &aegis_dto::protocol::AegisNetworkConfig,
 ) -> Result<AegisNetworkMemberRecord, AegisHostWriteError> {
     let parent = aegis_network_parent(db, network).map_err(AegisHostWriteError::from)?;
     let service_parent = aegis_parent(db).map_err(AegisHostWriteError::from)?;
@@ -3857,7 +3759,7 @@ pub(crate) fn maybe_allocate_internal_addresses(
     host: &mut AegisNetworkMemberRecord,
     existing: Option<&AegisNetworkMemberRecord>,
     peers: &[AegisNetworkMemberRecord],
-    mesh: &aegis_dto::v1::AegisMeshConfig,
+    mesh: &aegis_dto::protocol::AegisMeshConfig,
 ) -> Result<(), AegisHostWriteError> {
     if let Some(existing) = existing
         && let (Some(ipv4), Some(ipv6)) = (&existing.internal_ipv4, &existing.internal_ipv6)
@@ -3902,8 +3804,8 @@ fn allocate_default_internal_addresses(
     host: &AegisNetworkMemberRecord,
     existing: Option<&AegisNetworkMemberRecord>,
     peers: &[AegisNetworkMemberRecord],
-    mesh: &aegis_dto::v1::AegisMeshConfig,
-) -> Result<aegis_dto::v1::AegisNetworkMemberInternalAddresses, AegisHostWriteError> {
+    mesh: &aegis_dto::protocol::AegisMeshConfig,
+) -> Result<aegis_dto::protocol::AegisNetworkMemberInternalAddresses, AegisHostWriteError> {
     let mesh_ipv4 = parse_ipv4_subnet(&mesh.subnet_ipv4)?;
     let mesh_ipv6 = parse_ipv6_subnet(&mesh.subnet_ipv6)?;
     let wireguard_ipv4 = parse_ipv4_subnet(&mesh.wireguard_subnet_ipv4)?;
@@ -3949,7 +3851,7 @@ fn allocate_default_internal_addresses(
         if used.contains(&candidate_ipv4) || used.contains(&candidate_ipv6) {
             continue;
         }
-        return Ok(aegis_dto::v1::AegisNetworkMemberInternalAddresses {
+        return Ok(aegis_dto::protocol::AegisNetworkMemberInternalAddresses {
             ipv4: candidate_ipv4,
             ipv6: candidate_ipv6,
         });
@@ -4127,7 +4029,7 @@ fn tls_dns_constraint(ca: &TlsCaConfig) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aegis_dto::v1::AegisHostMessageLevel;
+    use aegis_dto::protocol::AegisHostMessageLevel;
     use firestore::FirestoreValue;
     use firestore::errors::{FirestoreDataConflictError, FirestoreErrorPublicGenericDetails};
     use x509_parser::{extensions::X509Extension, prelude::FromDer};
@@ -4304,15 +4206,14 @@ mod tests {
     #[test]
     fn tls_ca_and_service_certificate_generation_uses_service_public_key() {
         let root = validate_tls_ca_config(
-            "v2/aegis/tls/config/cas/root",
+            "TLS root CA",
             default_tls_root_ca_document("x.hoek.io").expect("root CA should generate"),
         )
         .expect("root CA should validate");
         let issuing_document = default_tls_issuing_ca_document(&root, "https://aegis.example/v2")
             .expect("issuing CA should generate");
-        let issuing =
-            validate_tls_ca_config("v2/aegis/tls/config/cas/issuing", issuing_document.clone())
-                .expect("issuing CA should validate");
+        let issuing = validate_tls_ca_config("TLS issuing CA", issuing_document.clone())
+            .expect("issuing CA should validate");
         assert_tls_certificate_issuer(&issuing.certificate_pem, &root.certificate_pem);
         assert_tls_crl_issuer(
             issuing_document
@@ -4461,7 +4362,7 @@ mod tests {
     #[test]
     fn tls_desired_state_is_authoritative_and_rejects_duplicate_labels() {
         let desired = AegisTlsDesiredState {
-            certificates: vec![aegis_dto::v1::AegisTlsCertificateConfig {
+            certificates: vec![aegis_dto::protocol::AegisTlsCertificateConfig {
                 label: " crates ".to_string(),
                 host_id: test_host_id(1),
                 dns_names: vec!["crates.x.hoek.io".to_string()],
@@ -4477,7 +4378,7 @@ mod tests {
         let mut duplicate = desired;
         duplicate
             .certificates
-            .push(aegis_dto::v1::AegisTlsCertificateConfig {
+            .push(aegis_dto::protocol::AegisTlsCertificateConfig {
                 label: "crates".to_string(),
                 host_id: test_host_id(2),
                 dns_names: vec!["other.x.hoek.io".to_string()],
@@ -4508,7 +4409,7 @@ mod tests {
             agent: None,
             principal_grants: vec![AegisPrincipalGrant {
                 login_principal: "khoek".to_string(),
-                oauth_principal: "user-1".to_string(),
+                user_id: "user-1".to_string(),
             }],
             ssh_lockdown_enabled: None,
             direct_gateway_report: None,
@@ -4532,14 +4433,14 @@ mod tests {
                 "messages": [{"level": "warning", "msg": "Bird3 apt source is misconfigured"}],
                 "principal_grants": [{
                     "login_principal": "khoek",
-                    "oauth_principal": "user-1"
+                    "user_id": "user-1"
                 }]
             })),
             value.get("report")
         );
         let mut document = FirestoreDb::serialize_to_doc(
             format!(
-                "projects/p/databases/(default)/documents/v2/aegis/hosts/{}",
+                "projects/p/databases/(default)/documents/v2/aegis/namespaces/personal/hosts/{}",
                 host.host_id
             ),
             &stored,
@@ -4592,7 +4493,7 @@ mod tests {
         assert!(value.get("transient").is_none());
         let mut document = FirestoreDb::serialize_to_doc(
             format!(
-                "projects/p/databases/(default)/documents/v2/aegis/networks/aegis/members/{}",
+                "projects/p/databases/(default)/documents/v2/aegis/namespaces/personal/networks/aegis/members/{}",
                 member.host_id
             ),
             &stored,
@@ -4652,7 +4553,7 @@ mod tests {
     fn stored_document_decode_excludes_firestore_metadata_but_rejects_stored_drift() {
         let state = StoredAegisEgressState::default();
         let mut document = FirestoreDb::serialize_to_doc(
-            "projects/p/databases/(default)/documents/v2/aegis/state/egress",
+            "projects/p/databases/(default)/documents/v2/aegis/namespaces/personal/state/egress",
             &state,
         )
         .expect("egress state should serialize as a Firestore document");
@@ -4689,7 +4590,7 @@ mod tests {
 
     #[test]
     fn maybe_allocate_wireguard_identity_preserves_existing_peer_address() {
-        let mesh = aegis_dto::v1::AegisMeshConfig {
+        let mesh = aegis_dto::protocol::AegisMeshConfig {
             endpoint_port: 51820,
             overlay_mtu: 1350,
             subnet_ipv4: "10.75.0.0/16".to_string(),

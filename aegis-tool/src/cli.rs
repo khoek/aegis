@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[command(
     name = "aegis",
     version,
-    about = "OAuth-backed SSH client and server management for the aegis ecosystem.",
+    about = "Authenticated SSH, networking, and fleet management.",
     infer_subcommands = true
 )]
 pub struct Cli {
@@ -144,7 +144,7 @@ pub enum ManageCommands {
 
     #[command(
         name = "login",
-        about = "Authenticate via OAuth and store the login state in this Unix user's config."
+        about = "Sign in with an issued credential or browser OAuth."
     )]
     Login(LoginArgs),
 
@@ -733,7 +733,7 @@ pub struct InstallArgs {
     pub host_id: Option<HostId>,
 
     #[arg(long, hide = true, value_name = "PRINCIPAL")]
-    pub initial_oauth_principal: Option<String>,
+    pub initial_user_id: Option<String>,
 }
 
 #[derive(Debug, Args, Default)]

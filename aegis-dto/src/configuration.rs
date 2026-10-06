@@ -1,6 +1,6 @@
 use crate::{
     mtu,
-    v1::{
+    protocol::{
         AegisDirectGatewayConfig, AegisDnsConfig, AegisEgressConfig, AegisNetworkConfig,
         AegisWireGuardAddressPool,
     },
@@ -339,7 +339,7 @@ pub struct NamespaceDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     wireguard: Option<BTreeMap<String, StoredAegisWireGuardConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    dns: Option<crate::v1::AegisDnsConfig>,
+    dns: Option<crate::protocol::AegisDnsConfig>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -407,7 +407,7 @@ impl NamespaceDefinition {
         let stored = self;
         anyhow::ensure!(
             stored.host_identity_schema == crate::HOST_IDENTITY_SCHEMA,
-            "v2/aegis.host_identity_schema must be `{}`",
+            "namespace.host_identity_schema must be `{}`",
             crate::HOST_IDENTITY_SCHEMA
         );
         let networks = validate_aegis_networks(&stored)?;
@@ -423,7 +423,7 @@ impl NamespaceDefinition {
             .and_then(|network| network.mesh.as_ref())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "v2/aegis.networks.{} must define mesh_subnet",
+                    "namespace.networks.{} must define mesh_subnet",
                     crate::DEFAULT_AEGIS_NETWORK
                 )
             })?;
@@ -438,32 +438,32 @@ impl NamespaceDefinition {
 }
 
 fn validate_aegis_dns_config(
-    mut dns: crate::v1::AegisDnsConfig,
-    networks: &BTreeMap<String, crate::v1::AegisNetworkConfig>,
-) -> anyhow::Result<crate::v1::AegisDnsConfig> {
-    dns.zone = normalize_dns_name(&dns.zone, "v2/aegis.dns.zone")?;
-    dns.suffix = normalize_dns_name(&dns.suffix, "v2/aegis.dns.suffix")?;
+    mut dns: crate::protocol::AegisDnsConfig,
+    networks: &BTreeMap<String, crate::protocol::AegisNetworkConfig>,
+) -> anyhow::Result<crate::protocol::AegisDnsConfig> {
+    dns.zone = normalize_dns_name(&dns.zone, "namespace.dns.zone")?;
+    dns.suffix = normalize_dns_name(&dns.suffix, "namespace.dns.suffix")?;
     if dns.suffix != dns.zone && !dns.suffix.ends_with(&format!(".{}", dns.zone)) {
         anyhow::bail!(
-            "v2/aegis.dns.suffix `{}` is not inside zone `{}`",
+            "namespace.dns.suffix `{}` is not inside zone `{}`",
             dns.suffix,
             dns.zone
         );
     }
     if dns.ttl < 60 {
-        anyhow::bail!("v2/aegis.dns.ttl must be at least 60 seconds");
+        anyhow::bail!("namespace.dns.ttl must be at least 60 seconds");
     }
     if dns.cloudflare.api_token.trim().is_empty() {
-        anyhow::bail!("v2/aegis.dns.cloudflare.api_token is required");
+        anyhow::bail!("namespace.dns.cloudflare.api_token is required");
     }
     dns.cloudflare.api_token = dns.cloudflare.api_token.trim().to_string();
     for (label, binding) in &mut dns.bindings {
-        validate_dns_label(label, "v2/aegis.dns.bindings")?;
+        validate_dns_label(label, "namespace.dns.bindings")?;
         validate_network_name(&binding.network)
-            .with_context(|| format!("v2/aegis.dns.bindings.{label}.network is invalid"))?;
+            .with_context(|| format!("namespace.dns.bindings.{label}.network is invalid"))?;
         if !networks.contains_key(&binding.network) {
             anyhow::bail!(
-                "v2/aegis.dns.bindings.{label}.network references unknown network `{}`",
+                "namespace.dns.bindings.{label}.network references unknown network `{}`",
                 binding.network
             );
         }
@@ -473,7 +473,7 @@ fn validate_aegis_dns_config(
         let expected = format!("{name}.{}", dns.suffix);
         if network.host_dns_suffix.as_deref() != Some(expected.as_str()) {
             anyhow::bail!(
-                "v2/aegis.networks.{name}.host_dns_suffix must be `{expected}` while DNS is configured"
+                "namespace.networks.{name}.host_dns_suffix must be `{expected}` while DNS is configured"
             );
         }
     }
@@ -507,24 +507,25 @@ fn validate_dns_label(label: &str, field: &str) -> anyhow::Result<()> {
 
 fn validate_aegis_direct_gateway(
     stored: &NamespaceDefinition,
-) -> anyhow::Result<crate::v1::AegisDirectGatewayConfig> {
+) -> anyhow::Result<crate::protocol::AegisDirectGatewayConfig> {
     let Some(direct_gateway) = stored.direct_gateway.as_ref() else {
-        anyhow::bail!("v2/aegis.direct_gateway is required");
+        anyhow::bail!("namespace.direct_gateway is required");
     };
     let interface_name = normalized_text(direct_gateway.interface.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.direct_gateway.interface is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.direct_gateway.interface is required"))?;
     let interfaces = stored.wireguard.as_ref().cloned().unwrap_or_default();
     let interface = interfaces.get(interface_name).ok_or_else(|| {
         anyhow::anyhow!(
-            "v2/aegis.direct_gateway.interface references unknown WireGuard interface `{interface_name}`"
+            "namespace.direct_gateway.interface references unknown WireGuard interface `{interface_name}`"
         )
     })?;
-    let subnet_name = normalized_text(interface.subnet.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.subnet is required"))?;
+    let subnet_name = normalized_text(interface.subnet.as_ref()).ok_or_else(|| {
+        anyhow::anyhow!("namespace.wireguard.{interface_name}.subnet is required")
+    })?;
     let subnets = stored.subnets.as_ref().cloned().unwrap_or_default();
     let subnet = subnets.get(subnet_name).ok_or_else(|| {
         anyhow::anyhow!(
-            "v2/aegis.wireguard.{interface_name}.subnet references unknown subnet `{subnet_name}`"
+            "namespace.wireguard.{interface_name}.subnet references unknown subnet `{subnet_name}`"
         )
     })?;
     let full_tunnel_dns = direct_gateway
@@ -537,7 +538,7 @@ fn validate_aegis_direct_gateway(
                 .map(|address| address.to_string())
                 .with_context(|| {
                     format!(
-                        "v2/aegis.direct_gateway.full_tunnel_dns contains invalid address `{address}`"
+                        "namespace.direct_gateway.full_tunnel_dns contains invalid address `{address}`"
                     )
                 })
         })
@@ -546,98 +547,99 @@ fn validate_aegis_direct_gateway(
         || !full_tunnel_dns.iter().any(|address| address.contains(':'))
     {
         anyhow::bail!(
-            "v2/aegis.direct_gateway.full_tunnel_dns must contain IPv4 and IPv6 addresses"
+            "namespace.direct_gateway.full_tunnel_dns must contain IPv4 and IPv6 addresses"
         );
     }
-    Ok(crate::v1::AegisDirectGatewayConfig {
+    Ok(crate::protocol::AegisDirectGatewayConfig {
         interface: interface_name.to_string(),
         endpoint_port: interface.port.filter(|port| *port > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.port is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.port is required")
         })?,
         mtu: interface.mtu.filter(|mtu| *mtu > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.mtu is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.mtu is required")
         })?,
         fwmark: interface.fwmark.filter(|mark| *mark > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.fwmark is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.fwmark is required")
         })?,
-        subnet_ipv4: required_ip_family_field(subnet, "v2/aegis.subnets", subnet_name, "ipv4")?,
-        subnet_ipv6: required_ip_family_field(subnet, "v2/aegis.subnets", subnet_name, "ipv6")?,
+        subnet_ipv4: required_ip_family_field(subnet, "namespace.subnets", subnet_name, "ipv4")?,
+        subnet_ipv6: required_ip_family_field(subnet, "namespace.subnets", subnet_name, "ipv6")?,
         full_tunnel_dns,
     })
 }
 
 fn validate_aegis_egress(
     stored: &NamespaceDefinition,
-    networks: &BTreeMap<String, crate::v1::AegisNetworkConfig>,
-) -> anyhow::Result<crate::v1::AegisEgressConfig> {
+    networks: &BTreeMap<String, crate::protocol::AegisNetworkConfig>,
+) -> anyhow::Result<crate::protocol::AegisEgressConfig> {
     let egress = stored
         .egress
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.egress is required"))?;
     let interface_name = normalized_text(egress.interface.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.interface is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.egress.interface is required"))?;
     let network = normalized_text(egress.network.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.network is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.egress.network is required"))?;
     if networks
         .get(network)
         .and_then(|network| network.mesh.as_ref())
         .is_none()
     {
-        anyhow::bail!("v2/aegis.egress.network must reference a managed mesh network");
+        anyhow::bail!("namespace.egress.network must reference a managed mesh network");
     }
     let interfaces = stored.wireguard.as_ref().cloned().unwrap_or_default();
     let interface = interfaces.get(interface_name).ok_or_else(|| {
         anyhow::anyhow!(
-            "v2/aegis.egress.interface references unknown WireGuard interface `{interface_name}`"
+            "namespace.egress.interface references unknown WireGuard interface `{interface_name}`"
         )
     })?;
-    let subnet_name = normalized_text(interface.subnet.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.subnet is required"))?;
+    let subnet_name = normalized_text(interface.subnet.as_ref()).ok_or_else(|| {
+        anyhow::anyhow!("namespace.wireguard.{interface_name}.subnet is required")
+    })?;
     let dns_subnet_name = normalized_text(egress.dns_subnet.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.dns_subnet is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.egress.dns_subnet is required"))?;
     let subnets = stored.subnets.as_ref().cloned().unwrap_or_default();
     let subnet = subnets.get(subnet_name).ok_or_else(|| {
         anyhow::anyhow!(
-            "v2/aegis.wireguard.{interface_name}.subnet references unknown subnet `{subnet_name}`"
+            "namespace.wireguard.{interface_name}.subnet references unknown subnet `{subnet_name}`"
         )
     })?;
     let dns_subnet = subnets.get(dns_subnet_name).ok_or_else(|| {
-        anyhow::anyhow!("v2/aegis.egress.dns_subnet references unknown subnet `{dns_subnet_name}`")
+        anyhow::anyhow!("namespace.egress.dns_subnet references unknown subnet `{dns_subnet_name}`")
     })?;
-    Ok(crate::v1::AegisEgressConfig {
+    Ok(crate::protocol::AegisEgressConfig {
         network: network.to_string(),
         interface: interface_name.to_string(),
         endpoint_port: interface.port.filter(|port| *port > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.port is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.port is required")
         })?,
         mtu: interface.mtu.filter(|mtu| *mtu > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.mtu is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.mtu is required")
         })?,
         fwmark: egress
             .fwmark
             .filter(|value| *value > 0)
-            .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.fwmark is required"))?,
+            .ok_or_else(|| anyhow::anyhow!("namespace.egress.fwmark is required"))?,
         routing_table: egress
             .routing_table
             .filter(|value| *value > 0)
-            .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.routing_table is required"))?,
+            .ok_or_else(|| anyhow::anyhow!("namespace.egress.routing_table is required"))?,
         main_rule_priority: egress
             .main_rule_priority
-            .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.main_rule_priority is required"))?,
+            .ok_or_else(|| anyhow::anyhow!("namespace.egress.main_rule_priority is required"))?,
         egress_rule_priority: egress
             .egress_rule_priority
-            .ok_or_else(|| anyhow::anyhow!("v2/aegis.egress.egress_rule_priority is required"))?,
-        subnet_ipv4: required_ip_family_field(subnet, "v2/aegis.subnets", subnet_name, "ipv4")?,
-        subnet_ipv6: required_ip_family_field(subnet, "v2/aegis.subnets", subnet_name, "ipv6")?,
+            .ok_or_else(|| anyhow::anyhow!("namespace.egress.egress_rule_priority is required"))?,
+        subnet_ipv4: required_ip_family_field(subnet, "namespace.subnets", subnet_name, "ipv4")?,
+        subnet_ipv6: required_ip_family_field(subnet, "namespace.subnets", subnet_name, "ipv6")?,
         dns_subnet_ipv4: required_ip_family_field(
             dns_subnet,
-            "v2/aegis.subnets",
+            "namespace.subnets",
             dns_subnet_name,
             "ipv4",
         )?,
         dns_subnet_ipv6: required_ip_family_field(
             dns_subnet,
-            "v2/aegis.subnets",
+            "namespace.subnets",
             dns_subnet_name,
             "ipv6",
         )?,
@@ -646,72 +648,72 @@ fn validate_aegis_egress(
 
 fn validate_aegis_networks(
     stored: &NamespaceDefinition,
-) -> anyhow::Result<BTreeMap<String, crate::v1::AegisNetworkConfig>> {
+) -> anyhow::Result<BTreeMap<String, crate::protocol::AegisNetworkConfig>> {
     let subnets = stored.subnets.as_ref().cloned().unwrap_or_default();
     let interfaces = stored.wireguard.as_ref().cloned().unwrap_or_default();
     let networks = stored
         .networks
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("v2/aegis.networks is required"))?;
+        .ok_or_else(|| anyhow::anyhow!("namespace.networks is required"))?;
     let mut validated = BTreeMap::new();
     for (name, network) in networks {
         validate_network_name(name)?;
         let interface_name = normalized_text(network.interface.as_ref())
-            .ok_or_else(|| anyhow::anyhow!("v2/aegis.networks.{name}.interface is required"))?;
+            .ok_or_else(|| anyhow::anyhow!("namespace.networks.{name}.interface is required"))?;
         let interface = interfaces.get(interface_name).ok_or_else(|| {
             anyhow::anyhow!(
-                "v2/aegis.networks.{name}.interface references unknown WireGuard interface `{interface_name}`"
+                "namespace.networks.{name}.interface references unknown WireGuard interface `{interface_name}`"
             )
         })?;
         let wireguard_subnet_name =
             normalized_text(interface.subnet.as_ref()).ok_or_else(|| {
-                anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.subnet is required")
+                anyhow::anyhow!("namespace.wireguard.{interface_name}.subnet is required")
             })?;
         let wireguard_subnet = subnets.get(wireguard_subnet_name).ok_or_else(|| {
             anyhow::anyhow!(
-                "v2/aegis.wireguard.{interface_name}.subnet references unknown subnet `{wireguard_subnet_name}`"
+                "namespace.wireguard.{interface_name}.subnet references unknown subnet `{wireguard_subnet_name}`"
             )
         })?;
         let endpoint_port = interface.port.filter(|port| *port > 0).ok_or_else(|| {
-            anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.port is required")
+            anyhow::anyhow!("namespace.wireguard.{interface_name}.port is required")
         })?;
         let mesh = if let Some(mesh_subnet_name) = normalized_text(network.mesh_subnet.as_ref()) {
             if mesh_subnet_name == wireguard_subnet_name {
                 anyhow::bail!(
-                    "v2/aegis.networks.{name}.mesh_subnet must differ from wireguard_subnet"
+                    "namespace.networks.{name}.mesh_subnet must differ from wireguard_subnet"
                 );
             }
             let mesh_subnet = subnets.get(mesh_subnet_name).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "v2/aegis.networks.{name}.mesh_subnet references unknown subnet `{mesh_subnet_name}`"
+                    "namespace.networks.{name}.mesh_subnet references unknown subnet `{mesh_subnet_name}`"
                 )
             })?;
-            Some(crate::v1::AegisMeshConfig {
+            Some(crate::protocol::AegisMeshConfig {
                 endpoint_port,
                 overlay_mtu: network.overlay_mtu.ok_or_else(|| {
-                    anyhow::anyhow!("v2/aegis.networks.{name}.overlay_mtu is required")
+                    anyhow::anyhow!("namespace.networks.{name}.overlay_mtu is required")
                 })?,
                 subnet_ipv4: required_ip_family_field(
                     mesh_subnet,
-                    "v2/aegis.subnets",
+                    "namespace.subnets",
                     mesh_subnet_name,
                     "ipv4",
                 )?,
                 subnet_ipv6: required_ip_family_field(
                     mesh_subnet,
-                    "v2/aegis.subnets",
+                    "namespace.subnets",
                     mesh_subnet_name,
                     "ipv6",
                 )?,
                 wireguard_subnet_ipv4: required_ip_family_field(
                     wireguard_subnet,
-                    "v2/aegis.subnets",
+                    "namespace.subnets",
                     wireguard_subnet_name,
                     "ipv4",
                 )?,
                 wireguard_subnet_ipv6: required_ip_family_field(
                     wireguard_subnet,
-                    "v2/aegis.subnets",
+                    "namespace.subnets",
                     wireguard_subnet_name,
                     "ipv6",
                 )?,
@@ -723,26 +725,26 @@ fn validate_aegis_networks(
         };
         validated.insert(
             name.clone(),
-            crate::v1::AegisNetworkConfig {
+            crate::protocol::AegisNetworkConfig {
                 name: name.clone(),
-                wireguard: crate::v1::AegisNetworkWireGuardConfig {
+                wireguard: crate::protocol::AegisNetworkWireGuardConfig {
                     interface: interface_name.to_string(),
                     endpoint_port,
                     mtu: interface.mtu.filter(|mtu| *mtu > 0).ok_or_else(|| {
-                        anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.mtu is required")
+                        anyhow::anyhow!("namespace.wireguard.{interface_name}.mtu is required")
                     })?,
                     fwmark: interface.fwmark.filter(|mark| *mark > 0).ok_or_else(|| {
-                        anyhow::anyhow!("v2/aegis.wireguard.{interface_name}.fwmark is required")
+                        anyhow::anyhow!("namespace.wireguard.{interface_name}.fwmark is required")
                     })?,
                     subnet_ipv4: required_ip_family_field(
                         wireguard_subnet,
-                        "v2/aegis.subnets",
+                        "namespace.subnets",
                         wireguard_subnet_name,
                         "ipv4",
                     )?,
                     subnet_ipv6: required_ip_family_field(
                         wireguard_subnet,
-                        "v2/aegis.subnets",
+                        "namespace.subnets",
                         wireguard_subnet_name,
                         "ipv6",
                     )?,
@@ -755,7 +757,7 @@ fn validate_aegis_networks(
         );
     }
     if validated.is_empty() {
-        anyhow::bail!("v2/aegis.networks must not be empty");
+        anyhow::bail!("namespace.networks must not be empty");
     }
     Ok(validated)
 }

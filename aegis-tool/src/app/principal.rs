@@ -38,6 +38,6 @@ fn print_grants(response: &local_agent::PrincipalGrantResponse) {
         return;
     }
     for grant in &response.grants {
-        println!("{}", grant.oauth_principal);
+        println!("{}", grant.user_id);
     }
 }

@@ -20,8 +20,8 @@ with tempfile.TemporaryDirectory(prefix="aegis-release-") as directory:
         if package["name"] in required:
             if package.get("source") != "registry+https://github.com/rust-lang/crates.io-index" or not package.get("checksum"):
                 raise ValueError(f"non-public release dependency: {package['name']}")
-            if package["name"] == "capulus" and tuple(map(int, package["version"].split("."))) < (0, 6, 9):
-                raise ValueError("publish Capulus 0.6.9 before preparing the Aegis release")
+            if package["name"] == "capulus" and tuple(map(int, package["version"].split("."))) < (0, 6, 11):
+                raise ValueError("publish Capulus 0.6.11 before preparing the Aegis release")
             required.remove(package["name"])
     if required:
         raise ValueError(f"missing shared release dependencies: {required}")

@@ -8,7 +8,7 @@ use std::thread;
 
 use aegis_dto::{
     DEFAULT_AEGIS_NETWORK, HostId,
-    v1::{AegisDirectClientCertRequest, AegisDirectTarget},
+    protocol::{AegisDirectClientCertRequest, AegisDirectTarget},
 };
 use anyhow::{Context, Result, bail};
 use dialoguer::{Select, theme::ColorfulTheme};

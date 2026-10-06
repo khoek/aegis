@@ -1,6 +1,6 @@
 use aegis_dto::{
     AegisHostMode, HostAlias, HostAliases, HostId,
-    v1::{
+    protocol::{
         AegisAgentStatus, AegisDirectGatewayReport, AegisEnrollmentPhase, AegisEnrollmentSsh,
         AegisHostMessage, AegisNetworkConfig, AegisObservedPublicIps, AegisPrincipalGrant,
         AegisWireGuardAddressPool,
@@ -43,7 +43,7 @@ pub(crate) struct AegisEnrollmentRecord {
     pub mode: AegisHostMode,
     pub ssh: Option<AegisEnrollmentSsh>,
     pub transient: bool,
-    pub initial_oauth_principal: String,
+    pub initial_user_id: String,
     pub phase: AegisEnrollmentPhase,
     pub credential_session_id: Option<String>,
     pub created_unix: i64,
@@ -314,7 +314,7 @@ pub(crate) enum AegisEgressWriteError {
 #[derive(Clone, Debug)]
 pub(crate) struct AegisEgressSnapshot {
     pub generation: u64,
-    pub policies: Vec<aegis_dto::v1::AegisEgressPolicy>,
+    pub policies: Vec<aegis_dto::protocol::AegisEgressPolicy>,
 }
 
 #[derive(Debug, Error)]
@@ -446,14 +446,14 @@ pub(crate) trait AegisStore {
     async fn fetch_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
-    ) -> anyhow::Result<Option<aegis_dto::v1::AegisEgressPolicy>>;
+    ) -> anyhow::Result<Option<aegis_dto::protocol::AegisEgressPolicy>>;
 
     async fn compare_and_set_aegis_egress_policy(
         &self,
         source_host_id: &HostId,
         expected_generation: u64,
         expected_revision: Option<u64>,
-        replacement: Option<&aegis_dto::v1::AegisEgressPolicy>,
+        replacement: Option<&aegis_dto::protocol::AegisEgressPolicy>,
     ) -> Result<(), AegisEgressWriteError>;
 
     async fn list_aegis_direct_gateways(&self) -> anyhow::Result<Vec<AegisDirectGatewayRecord>>;
@@ -543,7 +543,7 @@ pub(crate) trait AegisStore {
 
 #[cfg(test)]
 mod tests {
-    use aegis_dto::v1::{AegisDirectGatewayReport, AegisDirectPeerObservation};
+    use aegis_dto::protocol::{AegisDirectGatewayReport, AegisDirectPeerObservation};
 
     use super::merge_direct_gateway_handshakes;
 

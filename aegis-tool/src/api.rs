@@ -3,7 +3,7 @@ use crate::config::{
 };
 use aegis_dto::{
     HostAlias, HostId, path,
-    v1::{
+    protocol::{
         AegisAliasResponse, AegisCredentialKind, AegisDirectClientCertRequest,
         AegisDirectClientCertResponse, AegisDirectGateway, AegisDirectGatewayInventory,
         AegisDirectGatewayPublishRequest, AegisDirectTargetListResponse, AegisDnsSyncRequest,
@@ -1823,7 +1823,7 @@ mod tests {
     use crate::config::UserAuthState;
     use aegis_dto::{
         HostId, path,
-        v1::{
+        protocol::{
             AegisAgentHealth, AegisAgentStatus, AegisDirectGatewayReport, AegisHostReportRequest,
             AegisPrincipalGrant,
         },
@@ -2299,7 +2299,7 @@ mod tests {
                 1 => MockResponse::json(serde_json::json!({
                     "principal_grants": [{
                         "login_principal": "ubuntu",
-                        "oauth_principal": "OpaqueUserID"
+                        "user_id": "OpaqueUserID"
                     }]
                 })),
                 _ => unreachable!("unexpected request"),
@@ -2331,7 +2331,7 @@ mod tests {
         assert_eq!(
             vec![AegisPrincipalGrant {
                 login_principal: "ubuntu".to_string(),
-                oauth_principal: "OpaqueUserID".to_string(),
+                user_id: "OpaqueUserID".to_string(),
             }],
             api.report_host("agent-token", &host_id, &request)
                 .expect("canonical response should succeed")
