@@ -28,6 +28,7 @@ dispatch and publishes `ghcr.io/khoek/aegis-api:vVERSION`. Make the GHCR package
 publicly readable on its first publication. Record the workflow's digest with the
 release. Setup resolves that tag once and deploys its immutable digest; operators
 can supply another pinned image with `--image`.
+Wait for the image to be publicly available before publishing `aegis-admin-tool`.
 
 The first release requires publishing the new shared dependencies before the
 clean crates.io build can run. Development lockfiles resolved with local patches

@@ -87,6 +87,7 @@ fn administration_help_and_validation_do_not_require_a_saved_endpoint() {
     for args in [
         vec!["--help"],
         vec!["setup", "--help"],
+        vec!["deploy", "--help"],
         vec!["authorize", "--help"],
         vec!["configure", "--help"],
         vec!["namespace-template"],
@@ -104,6 +105,28 @@ fn administration_help_and_validation_do_not_require_a_saved_endpoint() {
         assert!(result.status.success(), "{}", result.stderr);
         assert!(!result.stdout.contains("api.hoek.io"));
     }
+}
+
+#[test]
+fn deploy_without_an_image_opens_the_saved_installation() {
+    let dir = tempfile::tempdir().unwrap();
+    let result = capulus::process::CaptureOptions::default()
+        .validate()
+        .unwrap()
+        .run(
+            Command::new(env!("CARGO_BIN_EXE_aegis-admin"))
+                .env("HOME", dir.path())
+                .args(["deploy", "--project", "aegis-fresh-test"]),
+            None,
+        )
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("No saved deployment"),
+        "{}",
+        result.stderr
+    );
+    assert!(result.stdout.is_empty());
 }
 
 #[test]

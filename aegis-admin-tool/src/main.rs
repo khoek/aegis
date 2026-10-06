@@ -60,13 +60,13 @@ enum AdminCommand {
     Setup(deployment::SetupArgs),
     /// Initialize an existing Firestore database for an API hosted outside setup's Cloud Run deployment.
     Configure(deployment::ConfigureArgs),
-    /// Deploy an exact API image to an installation created by setup.
+    /// Deploy this release's API to an installation created by setup.
     Deploy {
         #[arg(long)]
         project: Option<String>,
-        /// Container reference pinned with @sha256:…
+        /// Override the official image with a container pinned by @sha256:…
         #[arg(long)]
-        image: String,
+        image: Option<String>,
     },
     /// Check the deployment, public endpoint, account and hub.
     Doctor(ProjectArgs),
@@ -175,7 +175,7 @@ fn run(command: AdminCommand) -> Result<i32> {
             let project = deployment::project(project)?;
             let _lock = aegis_tool::client::deployment_lock(&project)?;
             let mut deployment = Deployment::load(Some(project))?;
-            deployment.deploy(&image)?;
+            deployment.deploy(&deployment::resolve_image(image.as_deref())?)?;
         }
         AdminCommand::Doctor(args) => Deployment::load(args.project)?.doctor()?,
         AdminCommand::Authorize {

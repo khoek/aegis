@@ -5,7 +5,8 @@ Install `aegis-tool`, `aegis-admin-tool`, and the Google Cloud CLI. Sign in with
 permission to provision Cloud Run, Firestore, IAM, Compute Engine, and IAP.
 
 Run `aegis-admin setup`. It proposes a region from your timezone, asks once about
-a custom public endpoint, and shows the resource plan. Setup provisions the API,
+a custom public endpoint, and shows the resource plan. It selects and pins the
+official API image automatically. Setup provisions the API,
 identity and certificate authorities, a namespace, and Ubuntu hub VMs in the regions you select. It
 issues your user credential through local GCP access, signs you in, enrolls the
 current Ubuntu/systemd machine, and checks readiness. No OAuth client or browser
@@ -13,7 +14,7 @@ configuration is required. Use `--no-enroll` for an operator-only computer.
 
 Each hub is an `e2-medium` with a 30 GB disk and reserved public address. GCP bills
 these resources to your project. For unattended setup, supply `--project`,
-`--region`, and `--yes`; `--endpoint` and `--image IMAGE@sha256:DIGEST` are optional.
+`--region`, and `--yes`; `--endpoint` is optional.
 
 Rerun setup to manage hub regions: Space selects regions, Enter reviews the changes.
 New hubs become healthy before removed hubs are deleted. Removal deletes that
@@ -32,8 +33,9 @@ it rejects conflicting configuration. Setup waits for API activation and verifie
 database access using the API's runtime identity before deployment. It grants the
 GCP operator impersonation of that dedicated service account for this check.
 `aegis-admin doctor` checks the saved
-installation. `aegis-admin deploy --image IMAGE@sha256:DIGEST` deploys a ready
-revision before switching traffic.
+installation. `aegis-admin deploy` resolves the official image matching the installed
+admin release and deploys a ready revision before switching traffic. For custom
+builds, setup and deploy accept `--image IMAGE@sha256:DIGEST`.
 
 ## Accounts and credentials
 

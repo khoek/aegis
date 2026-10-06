@@ -336,10 +336,7 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
             login,
         }
         .validate()?;
-        let image = match &args.image {
-            Some(image) => validate_image(image)?.into(),
-            None => official_image()?,
-        };
+        let image = resolve_image(args.image.as_deref())?;
         Deployment {
             image,
             secret_version: None,
@@ -379,12 +376,11 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         client_secret = Some(oauth.client_secret);
     }
     ui::stage(&format!(
-        "Project: {}\nRegion: {}\nEndpoint: {}\nNamespace: {}\nImage: {}\nResources: Firestore, Cloud Run and regional Ubuntu hub VMs{}",
+        "Project: {}\nRegion: {}\nEndpoint: {}\nNamespace: {}\nResources: Firestore, Cloud Run and regional Ubuntu hub VMs{}",
         deployment.config.project,
         deployment.config.region,
         deployment.config.endpoint,
         deployment.config.namespace,
-        deployment.image,
         if args.no_enroll {
             ""
         } else {
@@ -1174,7 +1170,10 @@ fn validate_image(image: &str) -> Result<&str> {
     );
     Ok(image)
 }
-fn official_image() -> Result<String> {
+pub(super) fn resolve_image(image: Option<&str>) -> Result<String> {
+    if let Some(image) = image {
+        return Ok(validate_image(image)?.into());
+    }
     let task = ui::task(ui::TaskOptions {
         label: "Resolving the official API release".into(),
         deadline: Some(Duration::from_secs(60)),
@@ -1197,7 +1196,7 @@ fn official_image() -> Result<String> {
     let response = http.get(format!("https://ghcr.io/v2/khoek/aegis-api/manifests/v{}", env!("CARGO_PKG_VERSION")))
         .bearer_auth(token["token"].as_str().context("GHCR did not return a public pull token")?)
         .header("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json")
-        .send()?.error_for_status().context("Official API image is not published; pass --image with an exact published digest")?;
+        .send()?.error_for_status().context("Official API image is unavailable; check that this is a published Aegis release and retry")?;
     let digest = response
         .headers()
         .get("docker-content-digest")
