@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-tool"
-version = "0.4.12-bridge.1"
+version = "0.4.12"
 dependencies = [
  "aegis-dto",
  "anyhow",

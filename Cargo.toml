@@ -12,7 +12,7 @@ repository = "https://github.com/khoek/aegis"
 
 [workspace.dependencies]
 aegis-dto = { path = "aegis-dto", version = "0.4" }
-aegis-tool = { path = "aegis-tool", version = "=0.4.12-bridge.1" }
+aegis-tool = { path = "aegis-tool", version = "=0.4.12" }
 
 phylax-oidc = "0.1"
 arche-web = "0.1"
