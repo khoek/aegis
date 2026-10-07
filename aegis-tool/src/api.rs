@@ -1590,7 +1590,8 @@ pub(crate) fn installed_agent_api_base() -> Result<Option<String>> {
 
 pub(crate) fn uses_local_agent(api_base_override: Option<&str>) -> Result<bool> {
     let Some(installed) = installed_agent_api_base()? else {
-        return Ok(false);
+        return Ok(api_base_override.is_none()
+            && std::path::Path::new(aegis_dto::layout::AGENT_CONFIG_PATH).is_file());
     };
     let selected = aegis_dto::namespace::ApiEndpoint::parse(&resolve_api_base(
         api_base_override,

@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-tool"
-version = "0.4.6"
+version = "0.4.11"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -3284,9 +3284,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phylax-core"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce253a36b33b8dffa5d5294e9351b144c7cf97e43e4bc5046fe46a875287b56"
+checksum = "c80c878f1f8097f9097784946b30c76aca3d8d7119c88d598ab483e18fcdedd1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3305,9 +3305,9 @@ dependencies = [
 
 [[package]]
 name = "phylax-gcp"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e95dc05c8fd5e48dbc1375b0e822eaa1069c01424868efa421a86217062cb5"
+checksum = "4fefe654150b82101554da8972d9f4d275b23f721bcac5db25ea12f6168ba2db"
 dependencies = [
  "anyhow",
  "arche-firestore",
@@ -5819,18 +5819,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.60"
+version = "0.8.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6400fc4bb7426f6faac3fb07566122bb18622e3022bd2c36426a92ed489b1dbe"
+checksum = "879fb705ce98c32e41ebdb970fbe1204f8492423b314c6ab0354c3e7b5542866"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.60"
+version = "0.8.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99c27cc7525bad4df59a45e073c45b2c2aa820efb588234cc23a547ec69a34db"
+checksum = "708882a28301d604fa039cc7727607a98d04c4b86dc76ec9cc683f805d709759"
 dependencies = [
  "proc-macro2",
  "quote",

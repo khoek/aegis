@@ -319,7 +319,14 @@ fn remote_apply_disable_script() -> String {
          else\n\
            sudo /usr/sbin/sshd -t\n\
          fi\n\
-         sudo systemctl reload ssh || sudo systemctl reload sshd || sudo systemctl restart ssh || sudo systemctl restart sshd\n"
+         if sudo systemctl is-active --quiet ssh.service; then\n\
+           sudo systemctl reload ssh.service\n\
+         elif sudo systemctl is-active --quiet sshd.service; then\n\
+           sudo systemctl reload sshd.service\n\
+         else\n\
+           echo 'SSH service is not active; refusing to leave the host without a validated reload' >&2\n\
+           exit 1\n\
+         fi\n"
     )
 }
 

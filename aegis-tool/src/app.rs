@@ -138,10 +138,23 @@ fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
     };
     let invitation_selected = matches!(&cli.command, Commands::Manage(args)
         if matches!(&args.command, ManageCommands::Enroll(args) if args.invitation.is_some()));
+    let local_agent_command = command_targets_local_agent(&cli.command);
     let selected_api_base = match cli.api_base {
         Some(base) => Some(base),
         None if invitation_selected => None,
-        None => crate::config::UserContext::load()?.map(|context| context.api_base),
+        None => {
+            // A machine mutation must follow the namespace recorded by its
+            // installed agent. A user's last selected context can refer to a
+            // different deployment, and silently letting that context win
+            // makes the ordinary `advanced redeploy` command reject a valid
+            // local installation. Explicit `--api-base` remains available for
+            // deliberate remote administration.
+            match crate::api::installed_agent_api_base()? {
+                Some(installed) => Some(installed),
+                None if local_agent_command && Path::new(AGENT_CONFIG_PATH).is_file() => None,
+                None => crate::config::UserContext::load()?.map(|context| context.api_base),
+            }
+        }
     };
     let api_base_override = match cli.namespace {
         Some(namespace) => {
@@ -246,6 +259,23 @@ fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
             AdvancedCommands::RedeployStatus(args) => maintenance::redeploy_status(&args),
             AdvancedCommands::Fleet(args) => fleet::run(api_base_override.as_deref(), &args),
         },
+    }
+}
+
+fn command_targets_local_agent(command: &Commands) -> bool {
+    match command {
+        Commands::Manage(args) => match &args.command {
+            ManageCommands::Unenroll(args) => args.local,
+            ManageCommands::Lockdown(_) => true,
+            _ => false,
+        },
+        Commands::Advanced(args) => matches!(
+            &args.command,
+            AdvancedCommands::RefreshCredentials(_)
+                | AdvancedCommands::Reconcile(_)
+                | AdvancedCommands::Redeploy(_)
+        ),
+        _ => false,
     }
 }
 
@@ -417,8 +447,11 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
         }
         Some(target)
     };
-    let installed_agent_api_base =
-        install::load_optional_agent_config()?.map(|config| config.api_base);
+    let installed_agent_api_base = if args.orphan {
+        None
+    } else {
+        install::load_optional_agent_config()?.map(|config| config.api_base)
+    };
     let api_base = resolve_api_base(api_base_override, installed_agent_api_base.as_deref())?;
     if args.orphan {
         let workflow = ui::task(TaskOptions {

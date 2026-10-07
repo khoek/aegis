@@ -539,8 +539,20 @@ pub(crate) fn load_cached_inventory_for_endpoint(
             return Err(error).with_context(|| format!("failed to read {}", path.display()));
         }
     };
-    let inventory: CachedInventory = serde_json::from_slice(&raw)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let inventory: CachedInventory = match serde_json::from_slice(&raw) {
+        Ok(inventory) => inventory,
+        Err(_) => {
+            // The inventory is a disposable projection of the control plane.
+            // Never keep an obsolete or corrupt schema in the read path: the
+            // next successful reconciliation will write the current shape.
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {}
+            }
+            return Ok(None);
+        }
+    };
     if namespace_endpoint(&inventory.api_base)? != expected {
         return Ok(None);
     }
@@ -699,8 +711,10 @@ mod tests {
                 &path,
                 "https://example.test/v2/namespaces/alice"
             )
-            .is_err()
+            .unwrap()
+            .is_none()
         );
+        assert!(!path.exists());
     }
 
     #[test]

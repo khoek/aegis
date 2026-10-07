@@ -190,10 +190,22 @@ fn reconcile(deployment: &mut Deployment) -> Result<()> {
             );
             deployment.persist()?;
         }
+        // Provision every selected hub before waiting for readiness. A hub's
+        // Babel backbone cannot become ready until at least one other hub is
+        // present, so waiting after each individual installation deadlocks a
+        // fresh multi-region setup.
         ensure_hub(deployment, &region)?;
     }
     let endpoint = deployment.namespace_endpoint()?;
     let mut api = AuthenticatedApiClient::load(Some(&endpoint))?;
+    for region in &deployment.hub_regions {
+        let host = deployment
+            .hubs
+            .get(region)
+            .and_then(|hub| hub.host)
+            .with_context(|| format!("Hub in {region} has not been enrolled"))?;
+        wait(host, region, &mut api)?;
+    }
     check_selected(deployment, &mut api)?;
     for region in deployment.hubs.keys().cloned().collect::<Vec<_>>() {
         if !deployment.hub_regions.contains(&region) {
@@ -603,7 +615,7 @@ fn ensure_hub(deployment: &mut Deployment, region: &str) -> Result<()> {
             script.as_bytes(),
             Duration::from_secs(180),
         )?;
-        return wait(host, region, &mut api);
+        return Ok(());
     }
     let host = match host_id {
         Some(host) => host,
@@ -656,7 +668,7 @@ fn ensure_hub(deployment: &mut Deployment, region: &str) -> Result<()> {
         }
     }
     result.context("Hub resources and any staged agent are retained. Rerun setup; it checks active enrollment before replacing a pending invitation")?;
-    wait(host, region, &mut api)
+    Ok(())
 }
 
 fn wait_for_ssh(cloud: &super::gcloud::Gcloud, name: &str, zone: &str) -> Result<()> {
