@@ -440,10 +440,10 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
         None
     } else {
         let target = EnrollTarget::parse_unenroll(args)?;
-        if matches!(target, EnrollTarget::Local(_)) {
-            if let Some(code) = system::LocalRoot::reexec_if_needed()? {
-                return Ok(code);
-            }
+        if matches!(target, EnrollTarget::Local(_))
+            && let Some(code) = system::LocalRoot::reexec_if_needed()?
+        {
+            return Ok(code);
         }
         Some(target)
     };

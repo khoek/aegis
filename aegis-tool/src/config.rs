@@ -345,9 +345,7 @@ pub(crate) struct AgentConfig {
 
 impl AgentConfig {
     pub(crate) fn parse_toml(raw: &str) -> Result<Self> {
-        toml::from_str::<AgentConfigOptions>(raw)
-            .context("failed to parse aegis-agent config")?
-            .try_into()
+        crate::platform_bridge::parse(raw)
     }
 }
 
@@ -432,9 +430,7 @@ impl TryFrom<AgentConfigOptions> for AgentConfig {
 pub(crate) fn persist_agent_config(path: &Path, config: &AgentConfig) -> Result<()> {
     atomic_write(
         path,
-        toml::to_string(config)
-            .context("failed to encode aegis-agent config")?
-            .as_bytes(),
+        crate::platform_bridge::encode_preserving_schema(path, config)?.as_bytes(),
         Some(0o600),
         Some(0o755),
     )

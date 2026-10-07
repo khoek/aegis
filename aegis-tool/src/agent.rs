@@ -935,6 +935,7 @@ fn agent_app(state: Arc<AppState>) -> Router {
         .route(AEGIS_AGENT_STATUS_ROUTE, get(get_status))
         .route(AEGIS_AGENT_VERSION_ROUTE, get(get_version))
         .route(AEGIS_AGENT_REISSUE_TOKEN_ROUTE, post(post_reissue_token))
+        .route("/platform-transition", post(post_platform_transition))
         .route(
             "/tls/certs/{label}",
             axum::routing::put(put_tls_certificate),
@@ -1558,6 +1559,30 @@ async fn post_reissue_token(
             eprintln!("aegis-agent reconcile after token reissue failed: {error:#}");
         }
         Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(AgentHttpError)
+}
+
+async fn post_platform_transition(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer): ConnectInfo<AgentPeerCredentials>,
+) -> Result<&'static str, AgentHttpError> {
+    run_blocking(move || {
+        let uid = peer
+            .uid
+            .ok_or_else(|| AgentForbidden("missing peer UID".into()))?;
+        if uid != 0
+            && !capulus::managed::UnixAccount::by_uid(uid)?
+                .is_member_of(crate::managed::ACCESS_GROUP)?
+        {
+            return Err(AgentForbidden(
+                "platform transition requires a local Aegis operator".into(),
+            )
+            .into());
+        }
+        let _credentials = state.credentials.lock().expect("lock");
+        crate::platform_bridge::commit(&state.config_path, state.config.host.host_id)
     })
     .await
     .map_err(AgentHttpError)
@@ -7202,7 +7227,7 @@ fn verify_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -
 mod wireguard_kernel_tests;
 
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+pub(crate) mod tests {
     #[test]
     fn tls_provisioning_rejects_unprivileged_and_missing_peer_identity() {
         use axum::response::IntoResponse;
@@ -7316,7 +7341,7 @@ mod tests {
         format!("{value:032x}").parse().expect("test host UUID")
     }
 
-    pub(super) fn raw_agent_config() -> AgentConfigOptions {
+    pub(crate) fn raw_agent_config() -> AgentConfigOptions {
         toml::from_str(
             r#"
 api_base = "https://api.example.test/v2/namespaces/test"

@@ -13,6 +13,7 @@ mod locks;
 mod managed;
 mod metadata;
 mod platform;
+mod platform_bridge;
 mod principal_grants;
 mod redeploy_version;
 mod release;
