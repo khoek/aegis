@@ -145,7 +145,10 @@ have actually run; do not mark these gates complete from compilation alone.
   all five units returned enabled/active after reboot. `bird -p -c /etc/bird.conf`
   passed. The test API had no reachable hub peer, so the agent's data-plane
   reconciliation correctly remained pending; this is an infrastructure limitation,
-  not a skipped Arch installation step. The VM is intentionally retained for review.
+  not a skipped Arch installation step. A managed 0.4.5 redeploy built from
+  crates.io and rolled back cleanly when the new agent could not complete its
+  healthy reconciliation for the same missing hub. The VM is intentionally retained
+  for review.
 - Published `aegis-dto` and `aegis-tool` 0.4.4 after verifying a clean crates.io
   package build. Published `aegis-tool` 0.4.5 with the local-unenrollment
   re-exec fix found during this acceptance run. The disposable API ran the
