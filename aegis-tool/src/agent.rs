@@ -7395,6 +7395,15 @@ config_path = "/etc/bird/bird.conf"
         assert!(toml::from_str::<AgentConfigOptions>(&raw).is_err());
     }
 
+    #[test]
+    fn runtime_config_rejects_the_retired_bird_table() {
+        let raw = toml::to_string(&raw_agent_config())
+            .unwrap()
+            .replace("[routing]", "[bird]")
+            .replace("backend = \"bird\"\n", "");
+        assert!(AgentConfig::parse_toml(&raw).is_err());
+    }
+
     fn aliases(alias: &str) -> HostAliases {
         HostAliases::new(vec![HostAlias::parse(alias).expect("test host alias")])
             .expect("test host aliases")

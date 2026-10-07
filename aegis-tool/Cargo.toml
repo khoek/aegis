@@ -1,6 +1,6 @@
 [package]
 name = "aegis-tool"
-version = "0.4.11"
+version = "0.4.13"
 authors.workspace = true
 edition.workspace = true
 publish.workspace = true
