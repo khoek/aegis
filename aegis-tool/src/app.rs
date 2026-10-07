@@ -406,6 +406,17 @@ fn compact_line(value: &str) -> String {
 }
 
 fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<i32> {
+    let target = if args.orphan {
+        None
+    } else {
+        let target = EnrollTarget::parse_unenroll(args)?;
+        if matches!(target, EnrollTarget::Local(_)) {
+            if let Some(code) = system::LocalRoot::reexec_if_needed()? {
+                return Ok(code);
+            }
+        }
+        Some(target)
+    };
     let installed_agent_api_base =
         install::load_optional_agent_config()?.map(|config| config.api_base);
     let api_base = resolve_api_base(api_base_override, installed_agent_api_base.as_deref())?;
@@ -426,17 +437,7 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
         return Ok(0);
     }
 
-    let target = EnrollTarget::parse_unenroll(args)?;
-    match &target {
-        EnrollTarget::Local(_) => {
-            if let Some(code) = system::LocalRoot::reexec_if_needed()? {
-                return Ok(code);
-            }
-        }
-        EnrollTarget::Remote(_) => {}
-    }
-
-    match &target {
+    match target.as_ref().expect("non-orphan unenroll target") {
         EnrollTarget::Local(_) => {
             let workflow = ui::task(TaskOptions {
                 label: format!("Unenrolling local host `{}`", args.host),
