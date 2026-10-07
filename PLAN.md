@@ -147,5 +147,7 @@ have actually run; do not mark these gates complete from compilation alone.
   reconciliation correctly remained pending; this is an infrastructure limitation,
   not a skipped Arch installation step. The VM is intentionally retained for review.
 - Published `aegis-dto` and `aegis-tool` 0.4.4 after verifying a clean crates.io
-  package build. The disposable API ran the matching 0.4.3 workspace image during
-  the acceptance run; no production fleet or production database was changed.
+  package build. Published `aegis-tool` 0.4.5 with the local-unenrollment
+  re-exec fix found during this acceptance run. The disposable API ran the
+  matching 0.4.3 workspace image during the acceptance run; no production fleet
+  or production database was changed.
