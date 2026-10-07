@@ -133,14 +133,14 @@ have actually run; do not mark these gates complete from compilation alone.
   CLI/agent and all targets cross-check successfully, including bundled Babel.
   Cross-checks used Zig 0.17 and a macOS SDK; they do not establish native behavior.
 - Arch package names and service paths were verified against official package
-  metadata. Native Arch installation/kernel tests remain unrun: this shell has
-  neither passwordless sudo nor permission to create a mapped user namespace.
+  metadata. Native Arch installation, reboot, service, and enrollment tests ran
+  on the retained GCE VM below; hub-backed data-plane tests remain open.
 - Native acceptance checklist: `aegis-tool/tests/PLATFORMS.md`. Platform guide:
   `docs/platforms.md`. Explicit migration tools and fixtures: `tools/migrations`.
 - 2026-10-07 Arch acceptance: VM `aegis-arch-e2e-20261007` in
   `aegis-e2e-261003-22f2fe`, `australia-southeast1-b`, installed the public
   `aegis-tool` 0.4.4 package from crates.io after a full pacman upgrade and
-  reboot. Enrollment committed host `382d17c3-d9bb-4f20-901d-0776afd77cfe`,
+  reboot. Enrollment committed host `f307f116-f096-4613-9af4-7021ac922c2f`,
   configured `wg-aegis` at `10.75.1.4`, BIRD, both Aegis sockets, and the agent;
   all five units returned enabled/active after reboot. `bird -p -c /etc/bird.conf`
   passed. The test API had no reachable hub peer, so the agent's data-plane
