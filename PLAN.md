@@ -190,3 +190,24 @@ have actually run; do not mark these gates complete from compilation alone.
   subject invariant fix. The production Aegis API image containing that fix is
   deployed; malformed production refresh sessions were removed by an explicit
   operator repair and must be reissued.
+- 2026-10-08 production recovery: the API runs 0.4.6 with OAuth and issued
+  credentials enabled. Host records received explicit platform data; incompatible
+  local inventories regenerate as disposable caches. Authenticated SSH to
+  `storagebox` succeeds. A replacement agent credential repaired `schematic`.
+- All nine online machines passed the temporary 0.4.12 bridge audit: matching
+  user/system versions, ready agents, and no reconciliation errors or warnings.
+  An explicit operator request committed `[routing]` on seven machines, retaining
+  private config backups; two configurations were already current. Credential
+  rotation preserved the old schema until that request. An unauthorized local
+  user received HTTP 403 from the temporary endpoint.
+- Strict 0.4.13 is published and deployed to all nine participating machines.
+  Direct audits confirmed matching user/system versions, healthy agents without
+  warnings or errors, and HTTP 404 from the removed transition endpoint on every
+  host. All 18 stable IPv4/IPv6 address probes passed; authenticated SSH to
+  `storagebox` passed on the strict release. Production OAuth remains enabled.
+  The temporary 0.4.12 bridge release was yanked after verification.
+- Final source has no bridge parser or transition endpoint; 269 library tests,
+  all-target Clippy, and crates.io package verification passed against published
+  dependencies. Native Mac acceptance remains pending as listed above.
+  `coeus`, `flt-c4d-64`, `sabretop-ubu`, and `xps26top-ubu` remain excluded for
+  operator-directed manual repair.
