@@ -13,7 +13,7 @@ use crate::ui;
 use crate::wireguard_endpoint::wireguard_endpoint_ipv4;
 
 use super::{
-    BIRD_CONFIG_PATH, BIRD_SERVICE_NAME, WIREGUARD_CONFIG_PATH, WIREGUARD_DIR, WIREGUARD_INTERFACE,
+    BIRD_SERVICE_NAME, WIREGUARD_CONFIG_PATH, WIREGUARD_DIR, WIREGUARD_INTERFACE,
     WIREGUARD_PRIVATE_KEY_PATH, WIREGUARD_UNIT_PREFIX, WIREGUARD_UNIT_TEMPLATE_PATH, host,
     wireguard,
 };
@@ -154,8 +154,8 @@ impl<'a> BootstrapMeshScript<'a> {
         Ok(format!(
             r#"set -euo pipefail
 source /etc/os-release
-if [[ "${{ID:-}}" != "ubuntu" ]]; then
-  echo "only Ubuntu is supported" >&2
+if [[ "${{ID:-}}" != "ubuntu" && "${{ID:-}}" != "arch" ]]; then
+  echo "Unsupported Linux distribution: ${{ID:-unknown}}" >&2
   exit 1
 fi
 sudo install -d -m 755 {wireguard_dir}
@@ -238,7 +238,7 @@ sudo systemctl restart {bird_service}
 "#,
             apparmor_setup = apparmor::wireguard_access_install_shell(),
             bird_config = bird_config,
-            bird_config_path = BIRD_CONFIG_PATH,
+            bird_config_path = crate::platform::bird_config_path(self.local.platform)?,
             bird_service = BIRD_SERVICE_NAME,
             config = config,
             config_path = WIREGUARD_CONFIG_PATH,

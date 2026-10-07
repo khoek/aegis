@@ -298,7 +298,7 @@ fn mesh_route_targets(host: &CachedHost, options: &impl ConnectOptions) -> Resul
 
 fn resolve_connect_host_for(host: &CachedHost, options: &impl ConnectOptions) -> Result<String> {
     if options.use_endpoint() {
-        return preferred_wireguard_endpoint_ip(host.wireguard_endpoints()).ok_or_else(|| {
+        return preferred_wireguard_endpoint_ip(host.wireguard_endpoints())?.ok_or_else(|| {
             anyhow!(
                 "host `{}` has no published WireGuard endpoint",
                 host.alias()

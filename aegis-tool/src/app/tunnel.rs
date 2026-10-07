@@ -12,6 +12,7 @@ use crate::{
 };
 
 pub(super) fn run(api_base_override: Option<&str>, args: &TunnelArgs) -> Result<i32> {
+    crate::platform::detect()?.require(aegis_dto::platform::Capability::InternetTunnel)?;
     anyhow::ensure!(
         crate::api::uses_local_agent(api_base_override)?,
         "Internet tunnel commands require the local agent's namespace"
@@ -185,6 +186,7 @@ fn print_status(status: &operation::Status) {
     println!("source: {source}");
     match &status.local {
         AgentTunnelStatus::Unknown => println!("state: unknown"),
+        AgentTunnelStatus::Unsupported => println!("state: unsupported"),
         AgentTunnelStatus::Disabled => println!("state: disabled"),
         AgentTunnelStatus::Enabled { via } => println!("state: enabled\nvia: {via}"),
         AgentTunnelStatus::Reconciling { active_via, .. } => println!(

@@ -1,6 +1,16 @@
-#[cfg(test)]
+#[cfg(target_os = "linux")]
+use crate::config::AgentBirdConfig;
+#[cfg(target_os = "linux")]
+use aegis_dto::protocol::{AegisNetworkMemberInternalAddresses, AegisNetworkWireGuardConfig};
+#[cfg(any(target_os = "macos", test))]
+mod babel;
+#[cfg(all(test, target_os = "linux"))]
 mod egress_kernel_tests;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 mod tunnel;
+#[cfg(any(target_os = "macos", test))]
+mod vxlan;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -27,8 +37,7 @@ use aegis_dto::{
         AegisEgressConfig, AegisEgressEnableRequest, AegisEgressHost, AegisEgressIdentityRequest,
         AegisEgressInventory, AegisEgressOutcome, AegisEgressPolicy, AegisEgressResult,
         AegisEgressStatus, AegisHostMessage, AegisHostMessageLevel, AegisHostReportRequest,
-        AegisMeshConfig, AegisNetworkConfig, AegisNetworkMember,
-        AegisNetworkMemberInternalAddresses, AegisNetworkWireGuardConfig, AegisPrincipalGrant,
+        AegisMeshConfig, AegisNetworkConfig, AegisNetworkMember, AegisPrincipalGrant,
         AegisPutNetworkMemberRequest, AegisPutNetworkMemberWireGuard, aegis_user_cert_principal,
     },
     sshd_install_dropin_contents,
@@ -46,7 +55,9 @@ use capulus::managed::{
     ActivatedListeners, ManagedAgent, ManagementServer, ManagementServerOptions, ReleaseSource,
     ResolvedRelease, VersionTarget,
 };
+#[cfg(target_os = "linux")]
 use futures_util::StreamExt;
+#[cfg(target_os = "linux")]
 use rtnetlink::{
     MulticastGroup, new_multicast_connection,
     packet_core::NetlinkPayload,
@@ -61,16 +72,19 @@ use sha2::{Digest, Sha256};
 use ssh_key::{Certificate, HashAlg, PublicKey, certificate::CertType};
 use tokio::net::UnixListener;
 
+use crate::ssh_service::{
+    active as sshd_is_active, reload as reload_sshd, validate as validate_sshd,
+};
+
 use crate::{
     agent_credentials::AgentCredentials,
     api::{ApiClient, ApiClientError},
     cli::{AgentArgs, AgentMode},
     command::{require_success, require_success_with_input, run_capture},
     config::{
-        AgentBirdConfig, AgentConfig, AgentHostConfig, CachedHost as InventoryHost,
-        CachedInventory, CachedNetwork, ResolvedNetwork,
-        load_cached_inventory_for_endpoint as load_cached_inventory_file, persist_agent_config,
-        persist_inventory as persist_inventory_file,
+        AgentConfig, AgentHostConfig, CachedHost as InventoryHost, CachedInventory, CachedNetwork,
+        ResolvedNetwork, load_cached_inventory_for_endpoint as load_cached_inventory_file,
+        persist_agent_config, persist_inventory as persist_inventory_file,
     },
     egress_probe::{CandidateProbe, CommittedProbe},
     metadata::gce_wireguard_endpoint_ips,
@@ -114,17 +128,22 @@ const AEGIS_WIREGUARD_UNIT_TEMPLATE_PATH: &str =
 const AEGIS_WIREGUARD_UNIT_PREFIX: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
 
 const NORMAL_POLL_INTERVAL: Duration = Duration::from_secs(60);
+#[cfg(target_os = "linux")]
 const UNDERLAY_EVENT_DEBOUNCE: Duration = Duration::from_millis(500);
+#[cfg(target_os = "linux")]
 const UNDERLAY_EVENT_MAX_DEBOUNCE: Duration = Duration::from_secs(2);
 const UNDERLAY_MONITOR_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+#[cfg(target_os = "linux")]
 const UNDERLAY_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const NSS_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 const BABEL_ROUTE_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const BABEL_ROUTE_READY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BABEL_ROUTE_READY_STABLE_POLLS: u8 = 2;
 const BABEL_PROTOCOL_NAME: &str = "babel_mesh";
+#[cfg(target_os = "linux")]
 const BABEL_STATUS_COMMAND_TIMEOUT: &str = "3s";
 const APPLIED_CONFIG_DIRECTORY: &str = aegis_dto::layout::APPLIED_CONFIG_DIRECTORY;
+#[cfg(target_os = "linux")]
 const BIRD_APPLIED_CONFIG_NAME: &str = "bird";
 const SSHD_APPLIED_CONFIG_NAME: &str = "sshd";
 const WIREGUARD_UNIT_APPLIED_CONFIG_NAME: &str = "wireguard-systemd-unit";
@@ -167,6 +186,7 @@ pub(crate) struct AgentBabelStatus {
 pub(crate) enum AgentTunnelStatus {
     #[default]
     Unknown,
+    Unsupported,
     Disabled,
     Enabled {
         via: String,
@@ -539,11 +559,13 @@ struct BabelRouteSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(target_os = "linux")]
 enum UnderlayChange {
     Link(String),
     Route { network: IpAddr, prefix: u8 },
 }
 
+#[cfg(target_os = "linux")]
 impl UnderlayChange {
     fn description(&self) -> String {
         match self {
@@ -569,6 +591,7 @@ struct NetworkAgentConfig {
     wireguard: WireGuardConfig,
 }
 
+#[derive(Default)]
 struct RuntimeState {
     boot_id: String,
     first_reconcile_unix: Option<u64>,
@@ -664,24 +687,8 @@ impl RuntimeState {
     }
 }
 
-impl Default for RuntimeState {
-    fn default() -> Self {
-        Self {
-            boot_id: local_boot_id(),
-            first_reconcile_unix: None,
-            last_reconcile_unix: None,
-            last_reconcile_completed: None,
-            last_reconcile_warning: None,
-            last_reconcile_error: None,
-            applied_aliases: None,
-            required_babel_routes: BTreeSet::new(),
-            babel: AgentBabelStatus::default(),
-            tunnel: AgentTunnelStatus::default(),
-        }
-    }
-}
-
 struct AppState {
+    platform: aegis_dto::platform::HostPlatform,
     config: AgentConfig,
     api: ApiClient,
     config_path: PathBuf,
@@ -743,6 +750,12 @@ struct AgentHttpError(anyhow::Error);
 
 impl IntoResponse for AgentHttpError {
     fn into_response(self) -> Response {
+        if let Some(error) = self
+            .0
+            .downcast_ref::<aegis_dto::platform::UnsupportedCapability>()
+        {
+            return (StatusCode::CONFLICT, error.to_string()).into_response();
+        }
         if let Some(error) = self.0.downcast_ref::<AgentForbidden>() {
             return (StatusCode::FORBIDDEN, error.to_string()).into_response();
         }
@@ -784,7 +797,9 @@ pub fn run(args: &AgentArgs) -> Result<i32> {
 }
 
 async fn run_async(args: &AgentArgs, listeners: Option<ActivatedListeners>) -> Result<i32> {
+    let platform = crate::platform::detect()?;
     let config = load_config(&args.config)?;
+    config.routing.validate_platform(platform)?;
     let api = ApiClient::new_agent_control(&config.api_base)?;
     crate::config::AgentContext {
         api_base: config.api_base.clone(),
@@ -793,6 +808,7 @@ async fn run_async(args: &AgentArgs, listeners: Option<ActivatedListeners>) -> R
     .persist()?;
     let agent_refresh_token = config.auth.refresh_token.clone();
     let state = Arc::new(AppState {
+        platform,
         config,
         api,
         config_path: args.config.clone(),
@@ -803,23 +819,31 @@ async fn run_async(args: &AgentArgs, listeners: Option<ActivatedListeners>) -> R
         tunnel_operations: Mutex::new(Vec::new()),
         endpoint_recovery_peers: Mutex::new(Vec::new()),
         direct_targets: DirectTargetCache::default(),
-        runtime: Mutex::new(RuntimeState::default()),
+        runtime: Mutex::new(RuntimeState {
+            boot_id: crate::platform::boot_id()?,
+            ..Default::default()
+        }),
     });
 
     if args.once {
-        run_blocking({
+        let result = run_blocking({
             let state = Arc::clone(&state);
             move || reconcile_and_update_status(&state)
         })
-        .await?;
+        .await;
+        #[cfg(target_os = "macos")]
+        run_blocking(macos::shutdown)
+            .await
+            .context("one-shot native mesh cleanup failed; ownership journals retained")?;
+        result?;
         return Ok(0);
     }
 
-    let mut listeners = listeners.expect("non-once agent startup adopts systemd listeners");
+    let mut listeners = listeners.expect("non-once agent startup adopts service listeners");
     let application_listener = listeners.take_tokio("application")?;
     let management_listener = listeners.take_tokio("capulus")?;
     if !listeners.is_empty() {
-        bail!("aegis-agent retained an unexpected systemd listener");
+        bail!("aegis-agent retained an unexpected service listener");
     }
     let management = Arc::new(ManagedAgent::new(
         Arc::new(crate::managed::product()?),
@@ -839,11 +863,28 @@ async fn run_async(args: &AgentArgs, listeners: Option<ActivatedListeners>) -> R
             app.into_make_service_with_connect_info::<AgentPeerCredentials>(),
         ) => result.context("failed to serve the aegis application API"),
         result = management_server.run() => result.context("failed to serve the aegis Capulus API"),
+        result = shutdown_signal() => result,
     };
     reconcile_task.abort();
     underlay_monitor_task.abort();
+    #[cfg(target_os = "macos")]
+    run_blocking(macos::shutdown).await?;
     result?;
     Ok(0)
+}
+
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! { signal = tokio::signal::ctrl_c() => signal?, _ = terminate.recv() => {} }
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::future::pending().await
+    }
 }
 
 struct AegisReleaseSource;
@@ -919,6 +960,9 @@ async fn reconcile_loop(state: Arc<AppState>) {
     }
 }
 
+#[cfg(target_os = "macos")]
+use macos::{current_babel_route_snapshot, monitor_underlay_events};
+
 async fn underlay_monitor_loop(state: Arc<AppState>) {
     loop {
         if let Err(error) = monitor_underlay_events(Arc::clone(&state)).await {
@@ -931,6 +975,7 @@ async fn underlay_monitor_loop(state: Arc<AppState>) {
     }
 }
 
+#[cfg(target_os = "linux")]
 async fn monitor_underlay_events(state: Arc<AppState>) -> Result<()> {
     let (connection, _handle, mut messages) = new_multicast_connection(&[
         MulticastGroup::Link,
@@ -970,6 +1015,7 @@ async fn monitor_underlay_events(state: Arc<AppState>) -> Result<()> {
     bail!("kernel route-netlink event stream ended")
 }
 
+#[cfg(target_os = "linux")]
 fn relevant_underlay_change(
     payload: &NetlinkPayload<RouteNetlinkMessage>,
     peers: &[WireGuardEndpointPeer],
@@ -994,6 +1040,7 @@ fn relevant_underlay_change(
     }
 }
 
+#[cfg(target_os = "linux")]
 fn route_network(route: &RouteMessage) -> Option<(IpAddr, u8)> {
     let prefix = route.header.destination_prefix_length;
     match route.header.address_family {
@@ -1029,6 +1076,7 @@ fn route_network(route: &RouteMessage) -> Option<(IpAddr, u8)> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn ip_in_subnet(network: IpAddr, prefix: u8, address: IpAddr) -> bool {
     match (network, address) {
         (IpAddr::V4(network), IpAddr::V4(address)) => ipv4_in_subnet((network, prefix), address),
@@ -1037,6 +1085,7 @@ fn ip_in_subnet(network: IpAddr, prefix: u8, address: IpAddr) -> bool {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn usable_link_name(link: &LinkMessage) -> Option<&str> {
     if !link.attributes.iter().any(|attribute| {
         matches!(
@@ -1055,6 +1104,7 @@ fn usable_link_name(link: &LinkMessage) -> Option<&str> {
         })
 }
 
+#[cfg(target_os = "linux")]
 fn is_physical_underlay_interface(interface: &str) -> bool {
     interface != "lo"
         && !interface.starts_with(BABEL_OVERLAY_PREFIX)
@@ -1065,11 +1115,13 @@ fn is_physical_underlay_interface(interface: &str) -> bool {
             .exists()
 }
 
+#[cfg(target_os = "linux")]
 struct EndpointRebindReport {
     peers: Vec<WireGuardEndpointPeer>,
     failures: Vec<String>,
 }
 
+#[cfg(target_os = "linux")]
 async fn recover_wireguard_after_underlay_change(
     state: Arc<AppState>,
     changes: BTreeSet<UnderlayChange>,
@@ -1140,6 +1192,7 @@ async fn recover_wireguard_after_underlay_change(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn rebind_wireguard_endpoints(state: &AppState) -> Result<EndpointRebindReport> {
     let _guard = state.data_plane_lock.lock().expect("lock");
     let peers = state.endpoint_recovery_peers.lock().expect("lock").clone();
@@ -1301,7 +1354,7 @@ fn refresh_direct_targets(state: &AppState, plan: &DirectGatewayPlan, warnings: 
         DirectGatewayPlan::Configuring(inventory) | DirectGatewayPlan::Ready(inventory) => {
             &inventory.satellites[..]
         }
-        DirectGatewayPlan::Disabled { .. } => &[],
+        DirectGatewayPlan::Disabled { .. } | DirectGatewayPlan::Unsupported => &[],
         DirectGatewayPlan::Preserve => return,
     };
     state
@@ -1354,6 +1407,10 @@ async fn get_local_egress(
     ConnectInfo(peer): ConnectInfo<AgentPeerCredentials>,
     headers: HeaderMap,
 ) -> Result<Json<crate::tunnel_operation::Status>, AgentHttpError> {
+    state
+        .platform
+        .require(aegis_dto::platform::Capability::InternetTunnel)
+        .map_err(AgentHttpError)?;
     let bearer = forwarded_user_bearer(&headers).map_err(AgentHttpError)?;
     run_blocking(move || {
         let response = state
@@ -1640,6 +1697,7 @@ struct DirectGatewayState {
 
 #[derive(Debug)]
 enum DirectGatewayPlan {
+    Unsupported,
     Configuring(DirectGatewayState),
     Ready(DirectGatewayState),
     Disabled {
@@ -1716,10 +1774,15 @@ fn reconcile_and_update_status_inner(
 }
 
 fn reconcile(state: &AppState) -> Result<ReconcileSummary> {
-    ensure_managed_service_running(
-        aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH,
-        "systemd-resolved.service",
-    )?;
+    if state
+        .platform
+        .supports(aegis_dto::platform::Capability::InternetTunnel)
+    {
+        ensure_managed_service_running(
+            aegis_dto::layout::EGRESS_RESOLVED_DROPIN_PATH,
+            "systemd-resolved.service",
+        )?;
+    }
     let (inventory, direct_gateway, reported_wireguard_peers, warning) =
         match reconcile_control_plane(state) {
             Ok(summary) => (
@@ -1745,16 +1808,38 @@ fn reconcile(state: &AppState) -> Result<ReconcileSummary> {
     let data_plane = {
         let _guard = state.data_plane_lock.lock().expect("lock");
         let data_plane = reconcile_data_plane(state, &inventory)?;
-        reconcile_direct_gateway(&direct_gateway)?;
+        if state
+            .platform
+            .supports(aegis_dto::platform::Capability::DirectGateway)
+        {
+            reconcile_direct_gateway(&direct_gateway)?;
+        }
         // Start the loader only after reconciliation has persisted the desired rules
         // and unit. A previously failed loader must not prevent its own repair.
-        ensure_egress_services_running()?;
-        crate::app::lockdown::reconcile_enabled()?;
+        if state
+            .platform
+            .supports(aegis_dto::platform::Capability::InternetTunnel)
+        {
+            ensure_egress_services_running()?;
+        }
+        if state
+            .platform
+            .supports(aegis_dto::platform::Capability::SshLockdown)
+        {
+            crate::app::lockdown::reconcile_enabled()?;
+        }
         *state.endpoint_recovery_peers.lock().expect("lock") = data_plane.endpoint_peers.clone();
         data_plane
     };
     publish_direct_gateway_ready(state, &direct_gateway)?;
-    reconcile_egress_plane(state)?;
+    if state
+        .platform
+        .supports(aegis_dto::platform::Capability::InternetTunnel)
+    {
+        reconcile_egress_plane(state)?;
+    } else {
+        state.runtime.lock().expect("runtime").tunnel = AgentTunnelStatus::Unsupported;
+    }
     if let Some(reported_wireguard_peers) = reported_wireguard_peers {
         publish_host_report_after_peer_change(state, &reported_wireguard_peers)?;
     }
@@ -1869,6 +1954,8 @@ fn warnings_to_option(warnings: Vec<String>) -> Option<String> {
 
 fn reconcile_data_plane(state: &AppState, inventory: &CachedInventory) -> Result<DataPlaneSummary> {
     let local_networks = local_network_names(state, inventory);
+    #[cfg(target_os = "macos")]
+    macos::retain_networks(&local_networks)?;
     if local_networks.is_empty() {
         bail!(
             "local host `{}` is not a member of any published aegis network",
@@ -1915,6 +2002,11 @@ fn reconcile_network(
                 state.config.host.host_id
             )
         })?;
+    ensure!(
+        local.platform == state.platform,
+        "enrolled platform differs from the running host; repair the host identity explicitly"
+    );
+    state.platform.require_role(local.mode)?;
     let local_wireguard = local.wireguard.as_ref().ok_or_else(|| {
         anyhow!(
             "local host `{}` is missing a WireGuard identity in network `{network}`",
@@ -1931,7 +2023,7 @@ fn reconcile_network(
     // Managed meshes reserve the IPv4 underlay's smaller encapsulation overhead for
     // VXLAN and egress. Non-mesh networks can continue to prefer native IPv6.
     let ipv4_endpoint_required = config.managed_mesh;
-    let public_ipv6_available = system_supports_public_ipv6();
+    let public_ipv6_available = !ipv4_endpoint_required && system_supports_public_ipv6()?;
     let endpoint_peers = peers
         .iter()
         .filter_map(|peer| {
@@ -1944,45 +2036,62 @@ fn reconcile_network(
             )
         })
         .collect();
-    enable_mesh_ipv6(&config.wireguard.interface, false)?;
-    apply_wireguard_config(
-        &config.wireguard,
-        &inventory.config.wireguard,
-        &local,
-        &peers,
-        public_ipv6_available,
-        ipv4_endpoint_required,
-    )?;
-    enable_mesh_ipv6(&config.wireguard.interface, true)?;
-    if !config.managed_mesh {
-        return Ok(DataPlaneSummary {
+    #[cfg(target_os = "macos")]
+    {
+        macos::reconcile(macos::NetworkOptions {
+            network,
+            config,
+            inventory,
+            local: &local,
+            peers: &peers,
+        })?;
+        Ok(DataPlaneSummary {
+            required_babel_routes,
             endpoint_peers,
-            ..DataPlaneSummary::default()
-        });
+        })
     }
-    let mesh = inventory.config.mesh.clone().ok_or_else(|| {
-        anyhow!("network `{network}` has managed mesh enabled but no mesh config")
-    })?;
-    configure_loopback_internal_addresses(&mesh, local.internal.as_ref())?;
-    let babel_overlay_changes = reconcile_babel_overlays(
-        &config.wireguard.interface,
-        &local.host_id,
-        &local_wireguard.ipv4,
-        &peers,
-        mesh.overlay_mtu,
-    )?;
-    configure_mesh_sysctls(config.mode, &config.wireguard.interface)?;
-    apply_bird_config(
-        &state.config.bird,
-        &mesh,
-        &local,
-        config.mode,
-        &babel_overlay_changes,
-    )?;
-    Ok(DataPlaneSummary {
-        required_babel_routes,
-        endpoint_peers,
-    })
+    #[cfg(target_os = "linux")]
+    {
+        enable_mesh_ipv6(&config.wireguard.interface, false)?;
+        apply_wireguard_config(
+            &config.wireguard,
+            &inventory.config.wireguard,
+            &local,
+            &peers,
+            public_ipv6_available,
+            ipv4_endpoint_required,
+        )?;
+        enable_mesh_ipv6(&config.wireguard.interface, true)?;
+        if !config.managed_mesh {
+            return Ok(DataPlaneSummary {
+                endpoint_peers,
+                ..DataPlaneSummary::default()
+            });
+        }
+        let mesh = inventory.config.mesh.clone().ok_or_else(|| {
+            anyhow!("network `{network}` has managed mesh enabled but no mesh config")
+        })?;
+        configure_loopback_internal_addresses(&mesh, local.internal.as_ref())?;
+        let babel_overlay_changes = reconcile_babel_overlays(
+            &config.wireguard.interface,
+            &local.host_id,
+            &local_wireguard.ipv4,
+            &peers,
+            mesh.overlay_mtu,
+        )?;
+        configure_mesh_sysctls(config.mode, &config.wireguard.interface)?;
+        apply_bird_config(
+            state.config.routing.bird()?,
+            &mesh,
+            &local,
+            config.mode,
+            &babel_overlay_changes,
+        )?;
+        Ok(DataPlaneSummary {
+            required_babel_routes,
+            endpoint_peers,
+        })
+    }
 }
 
 fn local_network_names(state: &AppState, inventory: &CachedInventory) -> Vec<String> {
@@ -2074,6 +2183,7 @@ fn poll_babel_readiness(required_routes: &BTreeSet<IpAddr>) -> AgentBabelStatus 
     }
 }
 
+#[cfg(target_os = "linux")]
 fn current_babel_route_snapshot() -> BabelRouteSnapshot {
     let mut command = Command::new("/usr/bin/timeout");
     command.args([
@@ -2096,6 +2206,7 @@ fn current_babel_route_snapshot() -> BabelRouteSnapshot {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn parse_babel_route_snapshot(output: &str) -> BabelRouteSnapshot {
     let mut latest_route_update = None::<String>;
     let mut routes = BTreeSet::new();
@@ -2118,6 +2229,7 @@ fn parse_babel_route_snapshot(output: &str) -> BabelRouteSnapshot {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn babel_route(line: &str) -> Option<(IpAddr, &str)> {
     let route_update = babel_route_update(line)?;
     let prefix = line.split_ascii_whitespace().next()?;
@@ -2165,6 +2277,7 @@ fn babel_status_from_snapshot(
     }
 }
 
+#[cfg(target_os = "linux")]
 fn babel_route_update(line: &str) -> Option<&str> {
     let marker = format!("[{BABEL_PROTOCOL_NAME} ");
     let raw = line.split_once(&marker)?.1.split_once(']')?.0.trim();
@@ -2177,6 +2290,7 @@ fn babel_route_update(line: &str) -> Option<&str> {
     (!raw.is_empty()).then_some(raw)
 }
 
+#[cfg(target_os = "linux")]
 fn route_update_matches_iso_long_ms(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 23
@@ -2215,12 +2329,6 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn local_boot_id() -> String {
-    fs::read_to_string("/proc/sys/kernel/random/boot_id")
-        .map(|value| value.trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 fn fetch_inventory(state: &AppState) -> Result<FetchedInventory> {
@@ -2290,6 +2398,12 @@ fn fetch_direct_gateway_plan(
     state: &AppState,
     inventory: &CachedInventory,
 ) -> Result<DirectGatewayPlan> {
+    if !state
+        .platform
+        .supports(aegis_dto::platform::Capability::DirectGateway)
+    {
+        return Ok(DirectGatewayPlan::Unsupported);
+    }
     let token = access_token(state)?;
     let api = state.api.clone();
     let direct = api.get_direct_gateway_inventory(&token, &state.config.host.host_id)?;
@@ -2459,8 +2573,18 @@ fn local_public_endpoint_ips(state: &AppState, inventory: &CachedInventory) -> V
 
 fn host_report_request(state: &AppState) -> Result<AegisHostReportRequest> {
     let mut runtime = state.runtime.lock().expect("lock").status();
-    let lockdown = crate::app::lockdown::host_report();
-    let mut messages = local_host_messages();
+    let lockdown = if state
+        .platform
+        .supports(aegis_dto::platform::Capability::SshLockdown)
+    {
+        crate::app::lockdown::host_report()
+    } else {
+        crate::app::lockdown::HostReport {
+            enabled: false,
+            warning: None,
+        }
+    };
+    let mut messages = local_host_messages(state.platform);
     if let Some(alert) = state.credentials.lock().expect("lock").alert() {
         runtime.last_reconcile_error = Some(alert.value.clone());
         messages.push(alert);
@@ -2482,7 +2606,17 @@ fn host_report_request(state: &AppState) -> Result<AegisHostReportRequest> {
         },
         principal_grants: crate::principal_grants::PrincipalGrantStore::load()?.grants,
         ssh_lockdown_enabled: lockdown.enabled,
-        direct_gateway: live_wireguard_peer_report()?,
+        direct_gateway: if state
+            .platform
+            .supports(aegis_dto::platform::Capability::DirectGateway)
+        {
+            live_wireguard_peer_report()?
+        } else {
+            AegisDirectGatewayReport {
+                observed_unix: now_unix() as i64,
+                peers: Vec::new(),
+            }
+        },
     })
 }
 
@@ -2680,7 +2814,7 @@ fn sync_local_ssh(
         DirectGatewayPlan::Preserve => {
             read_optional_trimmed_text(Path::new(aegis_dto::layout::DIRECT_CLIENT_CA_PATH))?
         }
-        DirectGatewayPlan::Disabled { .. } => None,
+        DirectGatewayPlan::Disabled { .. } | DirectGatewayPlan::Unsupported => None,
     };
     if let Some(direct_client_ca) = direct_client_ca {
         client_ca_public_keys.push(direct_client_ca);
@@ -2727,7 +2861,7 @@ fn host_certificate_principals(
             required.insert(inventory.gateway.wireguard.ipv4.clone());
             required.insert(inventory.gateway.wireguard.ipv6.clone());
         }
-        DirectGatewayPlan::Disabled { .. } => {}
+        DirectGatewayPlan::Disabled { .. } | DirectGatewayPlan::Unsupported => {}
         DirectGatewayPlan::Preserve => {
             return Ok(HostCertificatePrincipals {
                 required,
@@ -2855,8 +2989,12 @@ fn network_member_needs_update(
         || (managed_mesh && current.internal.is_none())
 }
 
-fn local_host_messages() -> Vec<AegisHostMessage> {
-    bird3_apt_source_message().into_iter().collect()
+fn local_host_messages(platform: aegis_dto::platform::HostPlatform) -> Vec<AegisHostMessage> {
+    if platform.operating_system == aegis_dto::platform::OperatingSystem::Ubuntu {
+        bird3_apt_source_message().into_iter().collect()
+    } else {
+        Vec::new()
+    }
 }
 
 fn bird3_apt_source_message() -> Option<AegisHostMessage> {
@@ -3055,6 +3193,8 @@ fn apply_host_ssh(
         Some(0o644),
     )?;
     changed |= write_text_file_if_changed(&config.sshd_dropin_path, &sshd_dropin, Some(0o644))?;
+    #[cfg(target_os = "macos")]
+    crate::ssh_service::ensure_certificate_integration()?;
     activate_sshd_if_needed(&applied, changed)
 }
 
@@ -3096,7 +3236,10 @@ fn apply_authorized_principals(
 fn disable_local_ssh(config: &AgentHostConfig) -> Result<()> {
     let applied = AppliedConfig::new(SSHD_APPLIED_CONFIG_NAME, b"disabled");
     let changed = remove_file_if_exists_changed(&config.sshd_dropin_path)?;
-    activate_sshd_if_needed(&applied, changed)
+    if changed && sshd_is_active()? {
+        reload_sshd()?;
+    }
+    applied.mark()
 }
 
 fn activate_sshd_if_needed(applied: &AppliedConfig, changed: bool) -> Result<()> {
@@ -3111,18 +3254,6 @@ fn activate_sshd_if_needed(applied: &AppliedConfig, changed: bool) -> Result<()>
     validate_sshd()?;
     reload_sshd()?;
     applied.mark()
-}
-
-fn sshd_is_active() -> Result<bool> {
-    for service in ["ssh", "sshd"] {
-        if run_capture(Command::new("systemctl").args(["is-active", "--quiet", service]))?
-            .status
-            .success()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn authorized_principals_by_login_principal(
@@ -3163,7 +3294,7 @@ fn reconcile_direct_gateway(plan: &DirectGatewayPlan) -> Result<()> {
             apply_direct_gateway_config(inventory)
         }
         DirectGatewayPlan::Disabled { config, .. } => disable_direct_gateway(config),
-        DirectGatewayPlan::Preserve => Ok(()),
+        DirectGatewayPlan::Preserve | DirectGatewayPlan::Unsupported => Ok(()),
     }
 }
 
@@ -4772,7 +4903,8 @@ fn publish_direct_gateway_ready(state: &AppState, plan: &DirectGatewayPlan) -> R
             ..
         }
         | DirectGatewayPlan::Ready(_)
-        | DirectGatewayPlan::Preserve => Ok(()),
+        | DirectGatewayPlan::Preserve
+        | DirectGatewayPlan::Unsupported => Ok(()),
     }
 }
 
@@ -5258,6 +5390,7 @@ fn direct_gateway_sshd_dropin_contents(inventory: &DirectGatewayState) -> String
     )
 }
 
+#[cfg(target_os = "linux")]
 fn apply_wireguard_config(
     config: &WireGuardConfig,
     network_wireguard: &AegisNetworkWireGuardConfig,
@@ -5608,6 +5741,7 @@ fn finish_wireguard_runtime_section(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn reconcile_wireguard_routes(
     network: &AegisNetworkWireGuardConfig,
     interface: &str,
@@ -5760,7 +5894,7 @@ impl IpRouteEntry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 fn normalize_managed_wireguard_route(
     network: &AegisNetworkWireGuardConfig,
     destination: &str,
@@ -5836,6 +5970,7 @@ fn ensure_wireguard_systemd_unit() -> Result<()> {
     applied.mark()
 }
 
+#[cfg(target_os = "linux")]
 struct WireGuardConfigOptions<'a> {
     network: &'a AegisNetworkWireGuardConfig,
     private_key: &'a str,
@@ -5847,6 +5982,7 @@ struct WireGuardConfigOptions<'a> {
     ipv4_endpoint_required: bool,
 }
 
+#[cfg(target_os = "linux")]
 fn wireguard_config_contents(options: WireGuardConfigOptions<'_>) -> Result<String> {
     let WireGuardConfigOptions {
         network: network_wireguard,
@@ -6107,6 +6243,7 @@ fn direct_gateway_firewall_command(
     }
 }
 
+#[cfg(target_os = "linux")]
 fn configure_loopback_internal_addresses(
     mesh: &AegisMeshConfig,
     internal: Option<&AegisNetworkMemberInternalAddresses>,
@@ -6164,6 +6301,7 @@ struct IpAddressEntry {
     scope: String,
 }
 
+#[cfg(target_os = "linux")]
 fn configured_loopback_internal_addresses(mesh: &AegisMeshConfig) -> Result<Vec<(String, u8)>> {
     let output = require_success(
         "list loopback internal IPs",
@@ -6246,6 +6384,7 @@ fn ipv6_in_subnet((network, prefix): (Ipv6Addr, u8), address: Ipv6Addr) -> bool 
     (u128::from(network) & mask) == (u128::from(address) & mask)
 }
 
+#[cfg(target_os = "linux")]
 fn reconcile_babel_overlays(
     wireguard_interface: &str,
     local_host_id: &HostId,
@@ -6311,6 +6450,7 @@ fn reconcile_babel_overlays(
     Ok(changed_names.into_iter().collect())
 }
 
+#[cfg(target_os = "linux")]
 fn configure_mesh_sysctls(mode: AgentMode, wireguard_interface: &str) -> Result<()> {
     if mode == AgentMode::Hub {
         set_sysctl_if_changed(
@@ -6333,6 +6473,7 @@ fn configure_mesh_sysctls(mode: AgentMode, wireguard_interface: &str) -> Result<
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn enable_mesh_ipv6(wireguard_interface: &str, require_wireguard_interface: bool) -> Result<()> {
     set_ipv6_enabled("all")?;
     set_ipv6_enabled("default")?;
@@ -6343,6 +6484,7 @@ fn enable_mesh_ipv6(wireguard_interface: &str, require_wireguard_interface: bool
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn set_ipv6_enabled(interface: &str) -> Result<()> {
     set_sysctl_if_changed(
         &Path::new("/proc/sys/net/ipv6/conf")
@@ -6353,6 +6495,7 @@ fn set_ipv6_enabled(interface: &str) -> Result<()> {
     )
 }
 
+#[cfg(target_os = "linux")]
 fn ipv6_interface_sysctl_exists(interface: &str) -> bool {
     Path::new("/proc/sys/net/ipv6/conf")
         .join(interface)
@@ -6385,6 +6528,7 @@ fn set_sysctl_if_changed(path: &Path, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn mesh_overlay_interfaces() -> Result<Vec<String>> {
     let mut interfaces = fs::read_dir("/proc/sys/net/ipv4/conf")
         .context("failed to list IPv4 interfaces")?
@@ -6400,6 +6544,7 @@ fn mesh_overlay_interfaces() -> Result<Vec<String>> {
     Ok(interfaces)
 }
 
+#[cfg(target_os = "linux")]
 fn ensure_babel_overlay(
     name: &str,
     vni: u32,
@@ -6462,6 +6607,7 @@ fn ensure_babel_overlay(
     Ok(changed)
 }
 
+#[cfg(target_os = "linux")]
 fn link_is_up(details: &str) -> bool {
     details
         .split_once('<')
@@ -6469,6 +6615,7 @@ fn link_is_up(details: &str) -> bool {
         .is_some_and(|(flags, _)| flags.split(',').any(|flag| flag == "UP"))
 }
 
+#[cfg(target_os = "linux")]
 fn existing_babel_overlay_details(name: &str) -> Result<Option<String>> {
     let output = run_capture(Command::new("ip").args(["-d", "link", "show", "dev", name]))
         .with_context(|| format!("failed to inspect Babel overlay {name}"))?;
@@ -6478,6 +6625,7 @@ fn existing_babel_overlay_details(name: &str) -> Result<Option<String>> {
     Ok(Some(output.stdout.replace(['\\', '\n'], " ")))
 }
 
+#[cfg(target_os = "linux")]
 fn babel_overlay_matches(
     details: &str,
     vni: u32,
@@ -6494,6 +6642,7 @@ fn babel_overlay_matches(
         && details.contains("nolearning")
 }
 
+#[cfg(target_os = "linux")]
 fn create_babel_overlay(
     name: &str,
     vni: u32,
@@ -6529,6 +6678,7 @@ pub(crate) struct OverlayTransitAddrs {
     pub(crate) local_ipv6: Ipv6Addr,
 }
 
+#[cfg(target_os = "linux")]
 fn configure_babel_overlay_addresses(name: &str, transit: &OverlayTransitAddrs) -> Result<bool> {
     let existing = existing_babel_overlay_addresses(name)?;
     if overlay_addresses_match(&existing, transit) {
@@ -6568,6 +6718,7 @@ fn configure_babel_overlay_addresses(name: &str, transit: &OverlayTransitAddrs) 
     Ok(true)
 }
 
+#[cfg(target_os = "linux")]
 fn existing_babel_overlay_addresses(name: &str) -> Result<String> {
     let output = run_capture(Command::new("ip").args(["-o", "address", "show", "dev", name]))
         .with_context(|| format!("failed to inspect Babel overlay addresses for {name}"))?;
@@ -6577,6 +6728,7 @@ fn existing_babel_overlay_addresses(name: &str) -> Result<String> {
     Ok(output.stdout)
 }
 
+#[cfg(target_os = "linux")]
 fn overlay_addresses_match(details: &str, transit: &OverlayTransitAddrs) -> bool {
     details.contains(&format!(" {}/30 ", transit.local_ipv4))
         && details.contains(&format!(" {}/127 ", transit.local_ipv6))
@@ -6624,9 +6776,10 @@ pub(crate) fn peer_overlay_transit_addrs(
 }
 
 pub(crate) fn peer_overlay_vni(local_host_id: &HostId, peer_host_id: &HostId) -> u32 {
-    1 + ((peer_overlay_pair_hash(local_host_id, peer_host_id) as u32) & 0x00ff_ffff)
+    1 + (((peer_overlay_pair_hash(local_host_id, peer_host_id) as u32) & 0x00ff_ffff) % 0x00ff_ffff)
 }
 
+#[cfg(target_os = "linux")]
 fn apply_bird_config(
     config: &AgentBirdConfig,
     mesh: &AegisMeshConfig,
@@ -6997,41 +7150,8 @@ fn load_private_key(path: &Path) -> Result<String> {
 }
 
 fn ensure_wireguard_keypair(config: &WireGuardConfig) -> Result<()> {
-    if config.private_key_path.exists() && config.public_key_path.exists() {
-        return Ok(());
-    }
-    ensure_parent_dir(&config.private_key_path)?;
-    let private_key = require_success(
-        "generate WireGuard private key",
-        Command::new("wg").arg("genkey"),
-    )?
-    .stdout
-    .trim()
-    .to_string();
-    if private_key.is_empty() {
-        bail!("wg genkey returned an empty private key");
-    }
-    let public_key = require_success_with_input(
-        "derive WireGuard public key",
-        Command::new("wg").arg("pubkey"),
-        private_key.as_bytes(),
-    )?
-    .stdout
-    .trim()
-    .to_string();
-    if public_key.is_empty() {
-        bail!("wg pubkey returned an empty public key");
-    }
-    write_text_file(
-        &config.private_key_path,
-        &line_with_newline(&private_key),
-        Some(0o600),
-    )?;
-    write_text_file(
-        &config.public_key_path,
-        &line_with_newline(&public_key),
-        Some(0o644),
-    )
+    crate::wireguard_keys::Keypair::ensure(&config.private_key_path, &config.public_key_path)
+        .map(|_| ())
 }
 
 fn ensure_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -> Result<()> {
@@ -7043,14 +7163,7 @@ fn verify_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -
     let stored_public = fs::read_to_string(&config.public_key_path)
         .with_context(|| format!("failed to read {}", config.public_key_path.display()))?;
     let private_key = load_private_key(&config.private_key_path)?;
-    let derived_public = require_success_with_input(
-        "derive local WireGuard public key",
-        Command::new("wg").arg("pubkey"),
-        line_with_newline(&private_key).as_bytes(),
-    )?
-    .stdout;
-    let derived_public = aegis_dto::normalize_wireguard_key(&derived_public)
-        .context("derived local WireGuard public key is invalid")?;
+    let derived_public = crate::wireguard_keys::Keypair::from_private_key(&private_key)?.public_key;
     let stored_public = aegis_dto::normalize_wireguard_key(&stored_public).with_context(|| {
         format!(
             "stored WireGuard public key at {} is invalid",
@@ -7076,49 +7189,11 @@ fn verify_local_wireguard_public_key(config: &WireGuardConfig, expected: &str) -
     Ok(())
 }
 
-fn ensure_sshd_runtime_dir() -> Result<()> {
-    fs::create_dir_all("/run/sshd").context("failed to create /run/sshd")?;
-    #[cfg(unix)]
-    fs::set_permissions("/run/sshd", std::fs::Permissions::from_mode(0o755))
-        .context("failed to chmod /run/sshd")?;
-    Ok(())
-}
-
-fn validate_sshd() -> Result<()> {
-    ensure_sshd_runtime_dir()?;
-    let status = Command::new("/usr/sbin/sshd")
-        .arg("-t")
-        .status()
-        .context("failed to validate sshd configuration")?;
-    if !status.success() {
-        bail!("sshd configuration validation failed");
-    }
-    Ok(())
-}
-
-fn reload_sshd() -> Result<()> {
-    for args in [
-        ["reload", "ssh"],
-        ["restart", "ssh"],
-        ["reload", "sshd"],
-        ["restart", "sshd"],
-    ] {
-        let status = Command::new("systemctl")
-            .args(args)
-            .status()
-            .with_context(|| format!("failed to run systemctl {}", args.join(" ")))?;
-        if status.success() {
-            return Ok(());
-        }
-    }
-    bail!("failed to reload sshd")
-}
-
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[path = "agent/wireguard_kernel_tests.rs"]
 mod wireguard_kernel_tests;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     #[test]
     fn tls_provisioning_rejects_unprivileged_and_missing_peer_identity() {
@@ -7206,6 +7281,7 @@ mod tests {
             AegisPutNetworkMemberWireGuard,
         },
     };
+    #[cfg(target_os = "linux")]
     use rtnetlink::{
         packet_core::NetlinkPayload,
         packet_route::{
@@ -7252,7 +7328,8 @@ client_ca_path = "/etc/ssh/aegis-client-ca.pub"
 authorized_principals_dir = "/etc/ssh/auth_principals"
 sshd_dropin_path = "/etc/ssh/sshd_config.d/aegis.conf"
 
-[bird]
+[routing]
+backend = "bird"
 config_path = "/etc/bird/bird.conf"
 service = "bird"
 "#,
@@ -7294,7 +7371,8 @@ client_ca_path = "/etc/ssh/aegis-client-ca.pub"
 authorized_principals_dir = "/etc/ssh/auth_principals"
 sshd_dropin_path = "/etc/ssh/sshd_config.d/aegis.conf"
 
-[bird]
+[routing]
+backend = "bird"
 config_path = "/etc/bird/bird.conf"
 "#;
         assert!(toml::from_str::<AgentConfigOptions>(raw).is_err());
@@ -7401,6 +7479,10 @@ config_path = "/etc/bird/bird.conf"
             host_id: host_id(alias),
             aliases: aliases(alias),
             host: AegisNetworkHost {
+                platform: aegis_dto::platform::HostPlatform {
+                    operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                    architecture: aegis_dto::platform::Architecture::X86_64,
+                },
                 mode,
                 ssh: Some(AegisNetworkHostSsh {
                     port: Some(22),
@@ -8999,6 +9081,7 @@ fd75::5/128          unicast [babel_mesh 2026-04-29 12:16:03.917] * (100/96) [fd
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn underlay_route_events_only_match_configured_endpoint_paths() {
         let peer = inventory_host("hub-a", AegisHostMode::Hub, false);
         let target = wireguard_endpoint_peer("wg-aegis", 51820, &peer, false, true)
@@ -9037,6 +9120,7 @@ fd75::5/128          unicast [babel_mesh 2026-04-29 12:16:03.917] * (100/96) [fd
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn usable_link_events_require_a_ready_state_and_name() {
         let mut link = LinkMessage::default();
         link.attributes = vec![
@@ -9135,4 +9219,9 @@ fd75::5/128          unicast [babel_mesh 2026-04-29 12:16:03.917] * (100/96) [fd
             "10.75.1.3"
         ));
     }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn remove_native_resources() -> Result<()> {
+    macos::remove_owned_resources()
 }

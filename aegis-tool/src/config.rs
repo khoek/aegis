@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 
 pub type CachedNetworkConfig = aegis_dto::protocol::AegisNetworkConfig;
 pub const SHARED_CACHE_PATH: &str = "/var/lib/aegis/cache.json";
+#[cfg(target_os = "linux")]
 pub const AEGIS_AGENT_SOCKET_PATH: &str = "/run/aegis/agent.sock";
+#[cfg(target_os = "macos")]
+pub const AEGIS_AGENT_SOCKET_PATH: &str = "/private/var/run/aegis-agent.sock";
 pub const AGENT_CONTEXT_PATH: &str = "/var/lib/aegis/context.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -222,10 +225,7 @@ pub struct AgentAuthConfig {
 pub(crate) struct AgentHostConfigOptions {
     pub(crate) host_id: HostId,
     pub(crate) ssh_user: String,
-    #[serde(
-        default = "default_agent_ssh_port",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) port: Option<u16>,
     pub(crate) host_private_key_path: PathBuf,
     pub(crate) host_public_key_path: PathBuf,
@@ -244,6 +244,65 @@ pub(crate) struct AgentBirdConfigOptions {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "backend", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum AgentRoutingOptions {
+    Bird(AgentBirdConfigOptions),
+    Babel,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "backend", rename_all = "snake_case")]
+pub(crate) enum AgentRoutingConfig {
+    Bird(AgentBirdConfig),
+    Babel,
+}
+
+impl AgentRoutingOptions {
+    fn validate(self) -> Result<AgentRoutingConfig> {
+        match self {
+            Self::Bird(bird) => {
+                require_absolute_agent_config_path("routing.config_path", &bird.config_path)?;
+                if bird.service.is_empty()
+                    || !bird.service.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'@')
+                    })
+                {
+                    bail!("agent routing.service is not a valid systemd service name");
+                }
+                Ok(AgentRoutingConfig::Bird(AgentBirdConfig {
+                    config_path: bird.config_path,
+                    service: bird.service,
+                }))
+            }
+            Self::Babel => Ok(AgentRoutingConfig::Babel),
+        }
+    }
+}
+
+impl AgentRoutingConfig {
+    pub(crate) fn validate_platform(
+        &self,
+        platform: aegis_dto::platform::HostPlatform,
+    ) -> Result<()> {
+        let macos = platform.operating_system == aegis_dto::platform::OperatingSystem::MacOs;
+        if macos != matches!(self, Self::Babel) {
+            bail!(
+                "routing backend does not match the host platform; use Babel on macOS and BIRD on Linux"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn bird(&self) -> Result<&AgentBirdConfig> {
+        match self {
+            Self::Bird(bird) => Ok(bird),
+            Self::Babel => bail!("BIRD is not the selected routing backend"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentConfigOptions {
     pub(crate) api_base: String,
@@ -251,7 +310,7 @@ pub(crate) struct AgentConfigOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) cache_path: Option<PathBuf>,
     pub(crate) host: AgentHostConfigOptions,
-    pub(crate) bird: AgentBirdConfigOptions,
+    pub(crate) routing: AgentRoutingOptions,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -281,7 +340,7 @@ pub(crate) struct AgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cache_path: Option<PathBuf>,
     pub(crate) host: AgentHostConfig,
-    pub(crate) bird: AgentBirdConfig,
+    pub(crate) routing: AgentRoutingConfig,
 }
 
 impl AgentConfig {
@@ -334,7 +393,6 @@ impl TryFrom<AgentConfigOptions> for AgentConfig {
                 &raw.host.authorized_principals_dir,
             ),
             ("host.sshd_dropin_path", &raw.host.sshd_dropin_path),
-            ("bird.config_path", &raw.bird.config_path),
         ] {
             require_absolute_agent_config_path(field, path)?;
         }
@@ -349,13 +407,7 @@ impl TryFrom<AgentConfigOptions> for AgentConfig {
         {
             bail!("agent host key and certificate paths must be distinct");
         }
-        if raw.bird.service.is_empty()
-            || !raw.bird.service.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'@')
-            })
-        {
-            bail!("agent bird.service is not a valid systemd service name");
-        }
+        let routing = raw.routing.validate()?;
 
         Ok(Self {
             api_base: endpoint.base_url(),
@@ -372,10 +424,7 @@ impl TryFrom<AgentConfigOptions> for AgentConfig {
                 authorized_principals_dir: raw.host.authorized_principals_dir,
                 sshd_dropin_path: raw.host.sshd_dropin_path,
             },
-            bird: AgentBirdConfig {
-                config_path: raw.bird.config_path,
-                service: raw.bird.service,
-            },
+            routing,
         })
     }
 }
@@ -396,10 +445,6 @@ fn require_absolute_agent_config_path(field: &str, path: &Path) -> Result<()> {
         bail!("agent {field} must be an absolute path");
     }
     Ok(())
-}
-
-fn default_agent_ssh_port() -> Option<u16> {
-    Some(22)
 }
 
 fn default_agent_bird_service() -> String {
@@ -596,6 +641,24 @@ pub fn ensure_client_dirs() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn disabled_inbound_ssh_survives_persistence() {
+        let raw = super::AgentHostConfigOptions {
+            host_id: aegis_dto::HostId::new_v4(),
+            ssh_user: "user".into(),
+            port: None,
+            host_private_key_path: "/etc/ssh/ssh_host_ed25519_key".into(),
+            host_public_key_path: "/etc/ssh/ssh_host_ed25519_key.pub".into(),
+            host_certificate_path: "/etc/ssh/aegis-cert.pub".into(),
+            client_ca_path: "/etc/aegis/ca.pub".into(),
+            authorized_principals_dir: "/etc/aegis/principals".into(),
+            sshd_dropin_path: "/etc/ssh/sshd_config.d/90-aegis.conf".into(),
+        };
+        let saved = toml::to_string(&raw).unwrap();
+        let restored: super::AgentHostConfigOptions = toml::from_str(&saved).unwrap();
+        assert_eq!(restored.port, None);
+    }
+
     use super::{
         AgentAuthConfig, CachedHost, CachedInventory, persist_inventory, resolve_api_base,
     };
@@ -673,6 +736,10 @@ mod tests {
             ])
             .expect("aliases"),
             host: aegis_dto::protocol::AegisNetworkHost {
+                platform: aegis_dto::platform::HostPlatform {
+                    operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                    architecture: aegis_dto::platform::Architecture::X86_64,
+                },
                 mode: aegis_dto::AegisHostMode::Leaf,
                 ssh: Some(aegis_dto::protocol::AegisNetworkHostSsh {
                     port: Some(22),

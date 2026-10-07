@@ -38,6 +38,7 @@ impl Status {
 }
 
 pub(super) fn run(api_base_override: Option<&str>, args: &LockdownArgs) -> Result<i32> {
+    crate::platform::detect()?.require(aegis_dto::platform::Capability::SshLockdown)?;
     match &args.command {
         LockdownCommands::Enable(args) => {
             if let Some(code) = system::LocalRoot::reexec_if_needed()? {

@@ -601,6 +601,7 @@ fn isolated_tunnel_end_to_end() {
         |_| Ok(()),
     );
     let state = Arc::new(AppState {
+        platform: crate::platform::detect().unwrap(),
         config,
         api: ApiClient::new("http://127.0.0.1:18080/v2/namespaces/test").unwrap(),
         config_path: PathBuf::from("/etc/aegis/agent.toml"),

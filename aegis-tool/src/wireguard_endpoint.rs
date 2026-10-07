@@ -1,8 +1,11 @@
 use std::net::IpAddr;
 use std::process::Command;
 
-pub fn preferred_wireguard_endpoint_ip(endpoints: &[String]) -> Option<String> {
-    preferred_wireguard_endpoint_ip_with_ipv6_support(endpoints, system_supports_public_ipv6())
+pub fn preferred_wireguard_endpoint_ip(endpoints: &[String]) -> anyhow::Result<Option<String>> {
+    Ok(preferred_wireguard_endpoint_ip_with_ipv6_support(
+        endpoints,
+        system_supports_public_ipv6()?,
+    ))
 }
 
 pub fn wireguard_endpoint_ipv4(endpoints: &[String]) -> Option<String> {
@@ -15,14 +18,21 @@ pub fn wireguard_endpoint_ipv4(endpoints: &[String]) -> Option<String> {
     })
 }
 
-pub fn system_supports_public_ipv6() -> bool {
-    let Ok(output) = Command::new("ip")
-        .args(["-6", "route", "show", "default"])
-        .output()
-    else {
-        return false;
-    };
-    output.status.success() && output.stdout.iter().any(|byte| !byte.is_ascii_whitespace())
+pub fn system_supports_public_ipv6() -> anyhow::Result<bool> {
+    #[cfg(target_os = "linux")]
+    let output = crate::command::require_success(
+        "inspect public IPv6 route",
+        Command::new("ip").args(["-6", "route", "show", "default"]),
+    )?;
+    #[cfg(target_os = "macos")]
+    let output = crate::command::require_success(
+        "inspect public IPv6 route",
+        Command::new("/usr/sbin/netstat").args(["-rn", "-f", "inet6"]),
+    )?;
+    Ok(output
+        .stdout
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some("default")))
 }
 
 pub fn preferred_wireguard_endpoint_ip_with_ipv6_support(

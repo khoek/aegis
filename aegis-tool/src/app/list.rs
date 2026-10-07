@@ -1222,7 +1222,9 @@ fn print_local_tunnel_status() {
 
 fn tunnel_status_line(status: &AgentTunnelStatus) -> Option<String> {
     match status {
-        AgentTunnelStatus::Unknown | AgentTunnelStatus::Disabled => None,
+        AgentTunnelStatus::Unknown
+        | AgentTunnelStatus::Disabled
+        | AgentTunnelStatus::Unsupported => None,
         AgentTunnelStatus::Enabled { via } => Some(format!("↳ tunnel · via {via}")),
         AgentTunnelStatus::Reconciling {
             active_via: None,

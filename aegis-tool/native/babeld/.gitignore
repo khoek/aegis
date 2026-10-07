@@ -1,0 +1,14 @@
+*.o
+babeld
+babeld.html
+version.h
+cscope.*
+gmon.out
+core
+TAGS
+tags
+*.rej
+*.orig
+*~
+\#*#
+.vscode/

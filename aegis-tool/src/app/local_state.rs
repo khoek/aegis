@@ -59,6 +59,16 @@ impl ManagedHostStateStore {
         api_base_override: Option<&str>,
         api_token: Option<&str>,
     ) -> Result<Option<ManagedHostState>> {
+        if let Some(context) = crate::config::AgentContext::load()? {
+            let api_base = resolve_api_base(api_base_override, Some(&context.api_base))?;
+            if namespace_endpoint(&api_base)? == namespace_endpoint(&context.api_base)? {
+                return Ok(Some(ManagedHostState {
+                    api_base,
+                    host_id: context.host_id,
+                }));
+            }
+            bail!("selected deployment differs from the installed host identity");
+        }
         let identity = match RuntimeWireGuardIdentity::read() {
             Ok(identity) => identity,
             Err(_) => return Ok(None),
@@ -95,6 +105,9 @@ impl LocalHostIdentity {
     pub(super) fn host_id_from_managed_state_or_cache() -> Result<Option<HostId>> {
         if let Some(state) = ManagedHostStateStore::load()? {
             return Ok(Some(state.host_id));
+        }
+        if let Some(context) = crate::config::AgentContext::load()? {
+            return Ok(Some(context.host_id));
         }
         let hosts = load_all_hosts(Path::new(SHARED_CACHE_PATH))?;
         let Some(addresses) = WireGuardAddressSet::read_active().ok() else {

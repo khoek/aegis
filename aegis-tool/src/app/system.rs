@@ -3,10 +3,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-#[cfg(unix)]
-use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use capulus::shell::shell_quote as sh_quote;
 
 use crate::cli::InstallArgs;
@@ -14,12 +12,41 @@ use crate::command::{require_success, require_success_with_input, run_capture};
 use crate::config::agent_refresh_token_env_value;
 use crate::ui;
 
-use super::{
-    AEGIS_AGENT_REFRESH_TOKEN_ENV, REMOTE_HOST_CERT_PATH, WIREGUARD_DIR,
-    WIREGUARD_PRIVATE_KEY_PATH, WIREGUARD_PUBLIC_KEY_PATH,
-};
+use super::{AEGIS_AGENT_REFRESH_TOKEN_ENV, REMOTE_HOST_CERT_PATH};
 
 pub(super) struct LocalRoot;
+
+pub(super) fn prerequisites_script(use_sudo: bool) -> String {
+    let prefix = if use_sudo { "sudo " } else { "" };
+    let bird = if use_sudo {
+        Bird3Repository::with_sudo()
+    } else {
+        Bird3Repository::without_sudo()
+    };
+    format!(
+        r#"set -euo pipefail
+if [ "$(uname -s)" = Darwin ]; then
+    xcode-select -p >/dev/null || {{
+        echo 'Install the Apple command-line tools with xcode-select --install, then run setup again.' >&2
+        exit 1
+    }}
+else
+    . /etc/os-release
+    case "$ID" in
+        ubuntu)
+            {bird_setup}
+            retry {prefix}env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential ca-certificates curl iputils-ping iptables libssl-dev nftables openssh-server pkg-config python3 systemd-resolved rsync wireguard bird3
+            ;;
+        arch)
+            {prefix}pacman -Syu --needed --noconfirm base-devel ca-certificates curl iproute2 iputils iptables nftables openssh openssl pkgconf python rsync wireguard-tools bird
+            ;;
+        *) echo "Unsupported Linux distribution: $ID" >&2; exit 1 ;;
+    esac
+fi
+"#,
+        bird_setup = bird.setup_script()
+    )
+}
 
 impl LocalRoot {
     pub(super) fn reexec_if_needed() -> Result<Option<i32>> {
@@ -78,37 +105,18 @@ impl LocalRoot {
         crate::command::run_install(&mut command, Some(script.as_bytes()))
     }
 
-    pub(super) fn require_ubuntu() -> Result<()> {
-        let os_release =
-            fs::read_to_string("/etc/os-release").context("failed to read /etc/os-release")?;
-        if os_release
-            .lines()
-            .any(|line| matches!(line.trim(), "ID=ubuntu" | "ID=\"ubuntu\""))
-        {
-            Ok(())
-        } else {
-            bail!("only Ubuntu is supported")
-        }
+    pub(super) fn require_supported_platform() -> Result<()> {
+        crate::platform::detect()?.validate()?;
+        Ok(())
     }
 
-    pub(super) fn install_ubuntu_packages(packages: &[&str]) -> Result<()> {
-        Self::run_script(&format!(
-            "{}retry env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {}\n",
-            Bird3Repository::without_sudo().setup_script(),
-            packages.join(" "),
-        ))
+    pub(super) fn install_prerequisites() -> Result<()> {
+        Self::run_script(&prerequisites_script(false))
     }
 
-    pub(super) fn install_ubuntu_packages_without_sudo(packages: &[&str]) -> Result<()> {
-        let mut command = Command::new("sh");
-        command.args([
-            "-ceu",
-            &format!(
-                "{}retry env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {}\n",
-                Bird3Repository::without_sudo().setup_script(),
-                packages.join(" "),
-            ),
-        ]);
+    pub(super) fn install_prerequisites_as_root() -> Result<()> {
+        let mut command = Command::new("/bin/bash");
+        command.args(["-ceu", &prerequisites_script(false)]);
         crate::command::run_install(&mut command, None)
     }
 
@@ -247,6 +255,7 @@ impl SystemdUnit {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn disable_now(&self) -> Result<()> {
         let mut disable = Command::new("systemctl");
         disable.args(["disable", "--now", &self.name]);
@@ -263,14 +272,6 @@ impl SystemdUnit {
             return Ok(());
         }
         Ok(())
-    }
-
-    fn is_active(&self) -> bool {
-        let mut command = Command::new("systemctl");
-        command.args(["is-active", "--quiet", &self.name]);
-        run_capture(&mut command)
-            .map(|output| output.status.success())
-            .unwrap_or(false)
     }
 }
 
@@ -340,65 +341,11 @@ impl Sshd {
     }
 
     pub(super) fn reload() -> Result<()> {
-        for unit in ["ssh.service", "sshd.service"] {
-            if SystemdUnit::new(unit).is_active() {
-                for args in [["reload", unit], ["restart", unit]] {
-                    let mut command = Command::new("systemctl");
-                    command.args(args);
-                    if let Ok(output) = run_capture(&mut command)
-                        && output.status.success()
-                    {
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        for args in [
-            ["ssh", "reload"],
-            ["sshd", "reload"],
-            ["ssh", "restart"],
-            ["sshd", "restart"],
-        ] {
-            let mut command = Command::new("service");
-            command.args(args);
-            if let Ok(output) = run_capture(&mut command)
-                && output.status.success()
-            {
-                return Ok(());
-            }
-        }
-
-        if ["ssh.socket", "sshd.socket"]
-            .into_iter()
-            .any(|unit| SystemdUnit::new(unit).is_active())
-        {
-            return Ok(());
-        }
-
-        bail!("failed to reload sshd using systemctl/service")
+        crate::ssh_service::reload()
     }
 
     fn validate_config() -> Result<()> {
-        let _ = fs::create_dir_all("/run/sshd");
-        #[cfg(unix)]
-        let _ = fs::set_permissions("/run/sshd", Permissions::from_mode(0o755));
-        let mut saw_binary = false;
-        for program in ["sshd", "/usr/sbin/sshd"] {
-            let mut command = Command::new(program);
-            command.arg("-t");
-            if let Ok(output) = run_capture(&mut command) {
-                saw_binary = true;
-                if output.status.success() {
-                    return Ok(());
-                }
-            }
-        }
-        if saw_binary {
-            bail!("sshd configuration test failed");
-        } else {
-            bail!("could not find sshd to validate configuration");
-        }
+        crate::ssh_service::validate()
     }
 }
 
@@ -546,25 +493,6 @@ impl CommandPrefix {
             Self::None => "",
             Self::Sudo => "sudo ",
         }
-    }
-}
-
-pub(super) struct WireGuardKeypairInstallScript;
-
-impl WireGuardKeypairInstallScript {
-    pub(super) fn render() -> String {
-        format!(
-            "set -euo pipefail\n\
-             install -d -m 700 {WIREGUARD_DIR}\n\
-             if ! test -f {WIREGUARD_PRIVATE_KEY_PATH}; then\n\
-               sh -ceu 'umask 077; wg genkey > {WIREGUARD_PRIVATE_KEY_PATH}'\n\
-             fi\n\
-             if ! test -f {WIREGUARD_PUBLIC_KEY_PATH}; then\n\
-               sh -ceu 'wg pubkey < {WIREGUARD_PRIVATE_KEY_PATH} > {WIREGUARD_PUBLIC_KEY_PATH}'\n\
-             fi\n\
-             chmod 600 {WIREGUARD_PRIVATE_KEY_PATH}\n\
-             chmod 644 {WIREGUARD_PUBLIC_KEY_PATH}\n"
-        )
     }
 }
 

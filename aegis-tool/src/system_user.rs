@@ -1,9 +1,9 @@
 use std::process::Command;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use capulus::managed::UnixAccount;
 
-use crate::command::{require_success, run_capture};
+use crate::command::require_success;
 
 pub(crate) struct ManagementOperatorSetup {
     principal: String,
@@ -32,52 +32,84 @@ impl ManagementOperatorSetup {
         if self.group_existed != management_group_exists()? {
             bail!("Aegis management-group state changed while installation was prepared");
         }
-        if !self.group_existed {
-            let mut command = bounded_command("/usr/sbin/groupadd");
-            command.args(["--system", crate::managed::ACCESS_GROUP]);
-            require_success("create the Aegis management group", &mut command)?;
+        if cfg!(target_os = "macos") {
+            if !self.group_existed {
+                require_success(
+                    "create the Aegis management group",
+                    Command::new("/usr/sbin/dseditgroup").args([
+                        "-o",
+                        "create",
+                        "-q",
+                        crate::managed::ACCESS_GROUP,
+                    ]),
+                )?;
+            }
+            require_success(
+                "authorize the Aegis management operator",
+                Command::new("/usr/sbin/dseditgroup").args([
+                    "-o",
+                    "edit",
+                    "-a",
+                    &self.principal,
+                    "-t",
+                    "user",
+                    crate::managed::ACCESS_GROUP,
+                ]),
+            )?;
+        } else {
+            if !self.group_existed {
+                require_success(
+                    "create the Aegis management group",
+                    Command::new("/usr/sbin/groupadd")
+                        .args(["--system", crate::managed::ACCESS_GROUP]),
+                )?;
+            }
+            require_success(
+                "authorize the Aegis management operator",
+                Command::new("/usr/sbin/usermod").args([
+                    "--append",
+                    "--groups",
+                    crate::managed::ACCESS_GROUP,
+                    &self.principal,
+                ]),
+            )?;
         }
-        let mut command = bounded_command("/usr/sbin/usermod");
-        command.args([
-            "--append",
-            "--groups",
-            crate::managed::ACCESS_GROUP,
-            &self.principal,
-        ]);
-        require_success("authorize the Aegis management operator", &mut command)?;
         Ok(())
     }
 }
 
 pub(crate) fn remove_management_group() -> Result<()> {
     if management_group_exists()? {
-        let mut command = bounded_command("/usr/sbin/groupdel");
-        command.arg(crate::managed::ACCESS_GROUP);
-        require_success("remove the Aegis management group", &mut command)?;
+        let mut command = if cfg!(target_os = "macos") {
+            let mut command = Command::new("/usr/sbin/dseditgroup");
+            command.args(["-o", "delete"]);
+            command
+        } else {
+            Command::new("/usr/sbin/groupdel")
+        };
+        require_success(
+            "remove the Aegis management group",
+            command.arg(crate::managed::ACCESS_GROUP),
+        )?;
     }
     Ok(())
 }
 
 fn management_group_exists() -> Result<bool> {
-    let mut command = bounded_command("/usr/bin/getent");
-    command.args(["group", crate::managed::ACCESS_GROUP]);
-    let output =
-        run_capture(&mut command).context("failed to inspect the Aegis management group")?;
-    match output.status.code() {
-        Some(0) => Ok(true),
-        Some(2) => Ok(false),
-        status => bail!(
-            "getent failed while inspecting the Aegis management group with status {}: {}",
-            status
-                .map(|status| status.to_string())
-                .unwrap_or_else(|| "signal".to_string()),
-            output.stderr.trim()
-        ),
-    }
-}
-
-fn bounded_command(program: &str) -> Command {
-    let mut command = Command::new("/usr/bin/timeout");
-    command.args(["--signal=TERM", "--kill-after=2s", "15s", program]);
-    command
+    let output = if cfg!(target_os = "macos") {
+        require_success(
+            "inspect the Aegis management group",
+            Command::new("/usr/bin/dscl").args([
+                ".",
+                "-read",
+                &format!("/Groups/{}", crate::managed::ACCESS_GROUP),
+            ]),
+        )
+    } else {
+        require_success(
+            "inspect the Aegis management group",
+            Command::new("/usr/bin/getent").args(["group", crate::managed::ACCESS_GROUP]),
+        )
+    };
+    Ok(output.is_ok())
 }

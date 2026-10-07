@@ -18,6 +18,7 @@ pub(crate) struct AegisHostRecordSsh {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AegisHostRecord {
+    pub platform: aegis_dto::platform::HostPlatform,
     pub host_id: HostId,
     pub aliases: HostAliases,
     pub ssh: Option<AegisHostRecordSsh>,
@@ -61,6 +62,7 @@ pub(crate) struct AegisEnrollmentPrepared {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AegisEnrollmentPreparation<'a> {
+    pub platform: aegis_dto::platform::HostPlatform,
     pub host_public_key: Option<&'a str>,
     pub wireguard_public_key: &'a str,
     pub wireguard_endpoints: &'a [String],

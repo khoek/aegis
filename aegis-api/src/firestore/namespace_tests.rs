@@ -28,6 +28,10 @@ async fn exercise_namespaces() -> anyhow::Result<()> {
     let host_id: HostId = "00000000-0000-0000-0000-000000000001".parse()?;
     for (store, created_unix) in [(&alice, 10), (&bob, 20)] {
         let host = StoredAegisHostRecord {
+            platform: aegis_dto::platform::HostPlatform {
+                operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                architecture: aegis_dto::platform::Architecture::X86_64,
+            },
             aliases: HostAliases::new(vec!["same-name".parse()?])?,
             ssh: None,
             egress: None,

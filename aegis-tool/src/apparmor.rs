@@ -16,6 +16,7 @@ pub(crate) fn ensure_wireguard_access() -> Result<()> {
     replace_wireguard_access(true)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn remove_wireguard_access() -> Result<()> {
     replace_wireguard_access(false)?;
     replace_optional_text(Path::new(APPARMOR_WG_QUICK_AEGIS_RULES_PATH), None, 0o644)?;

@@ -929,6 +929,7 @@ mod tests_refactor {
             preparation: AegisEnrollmentPreparation<'_>,
         ) -> Result<AegisEnrollmentPrepared, AegisEnrollmentWriteError> {
             let AegisEnrollmentPreparation {
+                platform,
                 host_public_key,
                 wireguard_public_key,
                 wireguard_endpoints,
@@ -955,6 +956,7 @@ mod tests_refactor {
             if let (Some(host), Some(member)) = (existing_host.as_ref(), existing_member.as_ref()) {
                 if !host.pending
                     || !member.pending
+                    || host.platform != platform
                     || !prepared_host_matches_enrollment(&enrollment, host, member)
                     || host.ssh.as_ref().and_then(|ssh| ssh.public_key.as_deref())
                         != host_public_key
@@ -984,6 +986,7 @@ mod tests_refactor {
             }
             let principal = format!("enrollment:{host_id}");
             let host = self.write_host(&AegisHostRecord {
+                platform,
                 host_id: *host_id,
                 aliases: enrollment.aliases.clone(),
                 ssh: enrollment.ssh.as_ref().map(|ssh| AegisHostRecordSsh {
@@ -2303,6 +2306,10 @@ mod tests_refactor {
 
     fn sample_host(alias: &str, updated_unix: i64) -> AegisHostRecord {
         AegisHostRecord {
+            platform: aegis_dto::platform::HostPlatform {
+                operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                architecture: aegis_dto::platform::Architecture::X86_64,
+            },
             host_id: host_id(alias),
             aliases: aliases(alias),
             ssh: Some(AegisHostRecordSsh {
@@ -2839,6 +2846,10 @@ mod tests_refactor {
                 &format!("/v2{}", path::aegis_enrollment_prepare(&host_id)),
                 &enrollment_access,
                 &AegisEnrollmentPrepareRequest {
+                    platform: aegis_dto::platform::HostPlatform {
+                        operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                        architecture: aegis_dto::platform::Architecture::X86_64,
+                    },
                     host_public_key: None,
                     wireguard_public_key: TEST_GATEWAY_WIREGUARD_KEY.to_string(),
                     wireguard_endpoints: vec!["203.0.113.10".to_string()],
@@ -2856,6 +2867,10 @@ mod tests_refactor {
                 &format!("/v2{}", path::aegis_enrollment_prepare(&host_id)),
                 &enrollment_access,
                 &AegisEnrollmentPrepareRequest {
+                    platform: aegis_dto::platform::HostPlatform {
+                        operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                        architecture: aegis_dto::platform::Architecture::X86_64,
+                    },
                     host_public_key: Some(TEST_USER_PUBLIC_KEY.to_string()),
                     wireguard_public_key: TEST_GATEWAY_WIREGUARD_KEY.to_string(),
                     wireguard_endpoints: vec!["203.0.113.10".to_string()],
@@ -4380,6 +4395,110 @@ mod tests_refactor {
     }
 
     #[tokio::test]
+    async fn mac_hosts_cannot_be_tunnel_sources_or_gateways() {
+        for alias in ["source", "target-a"] {
+            let store = egress_ready_store();
+            store
+                .hosts
+                .lock()
+                .unwrap()
+                .get_mut(&host_id(alias))
+                .unwrap()
+                .platform
+                .operating_system = aegis_dto::platform::OperatingSystem::MacOs;
+            let response = test_app(store.clone())
+                .oneshot(json_request(
+                    Method::PUT,
+                    &format!("/v2/aegis/egress/{}", host_id("source")),
+                    &user_token(true),
+                    &AegisEgressEnableRequest {
+                        via: host_id("target-a"),
+                    },
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert!(
+                store
+                    .fetch_aegis_egress_policy(&host_id("source"))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mac_host_reports_reject_unsupported_enabled_features_before_writing() {
+        for lockdown in [true, false] {
+            let mut host = sample_host("alpha", 10);
+            host.platform.operating_system = aegis_dto::platform::OperatingSystem::MacOs;
+            let store = MemoryStore::with_hosts(vec![host]);
+            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+            let request = serde_json::json!({
+                "messages": [], "principal_grants": [], "ssh_lockdown_enabled": lockdown,
+                "agent": {"version": "1.2.3", "reported_unix": now, "health": {
+                    "boot_id": "00000000-0000-0000-0000-000000000001",
+                    "reconciled_since_boot": false, "applied_aliases": null
+                }},
+                "direct_gateway": {"observed_unix": now, "peers": if lockdown { vec![] } else {
+                    vec![serde_json::json!({"public_key": TEST_GATEWAY_WIREGUARD_KEY})]
+                }}
+            });
+            let response = test_app(store.clone())
+                .oneshot(json_request(
+                    Method::PUT,
+                    &format!("/v2/aegis/hosts/{}/report", host_id("alpha")),
+                    &agent_token(Some("alpha")),
+                    &request,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let host = store
+                .fetch_aegis_host(&host_id("alpha"))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(host.agent.is_none());
+            assert!(host.direct_gateway_report.is_none());
+            assert!(host.ssh_lockdown_enabled.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn mac_hosts_cannot_publish_egress_identities() {
+        let store = egress_ready_store();
+        {
+            let mut hosts = store.hosts.lock().unwrap();
+            let host = hosts.get_mut(&host_id("source")).unwrap();
+            host.platform.operating_system = aegis_dto::platform::OperatingSystem::MacOs;
+            host.egress_public_key = None;
+        }
+        let response = test_app(store.clone())
+            .oneshot(json_request(
+                Method::PUT,
+                &format!("/v2/aegis/hosts/{}/egress", host_id("source")),
+                &agent_token(Some("source")),
+                &aegis_dto::protocol::AegisEgressIdentityRequest {
+                    public_key: TEST_GATEWAY_WIREGUARD_KEY.into(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(
+            store
+                .fetch_aegis_host(&host_id("source"))
+                .await
+                .unwrap()
+                .unwrap()
+                .egress_public_key
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn only_the_host_agent_can_publish_an_egress_identity() {
         let host = sample_host("source", 10);
         let store = MemoryStore::with_hosts(vec![host.clone()]);
@@ -4829,6 +4948,18 @@ where
         ));
     }
     let (inventory, expected_generation) = build_egress_inventory_snapshot(&state).await?;
+    require_host_capability(
+        &state,
+        &source_host_id,
+        aegis_dto::platform::Capability::InternetTunnel,
+    )
+    .await?;
+    require_host_capability(
+        &state,
+        &request.via,
+        aegis_dto::platform::Capability::EgressGateway,
+    )
+    .await?;
     for host_id in [&source_host_id, &request.via] {
         if !inventory.hosts.contains_key(host_id) {
             return Err(ApiError::Conflict(format!(
@@ -4958,6 +5089,9 @@ where
     let public_key = normalize_wireguard_key(&request.public_key)
         .map_err(|error| ApiError::BadRequest(format!("invalid egress public key: {error}")))?;
     let mut host = require_active_egress_host(&state, &host_id).await?;
+    host.platform
+        .require(aegis_dto::platform::Capability::InternetTunnel)
+        .map_err(|error| ApiError::Conflict(error.to_string()))?;
     if host.egress_public_key.as_deref() == Some(public_key.as_str()) {
         return Ok(StatusCode::NO_CONTENT);
     }
@@ -5144,7 +5278,12 @@ where
             let Some(host) = hosts.get(&member.host_id) else {
                 continue;
             };
-            if member.pending || host.pending {
+            if member.pending
+                || host.pending
+                || !host
+                    .platform
+                    .supports(aegis_dto::platform::Capability::InternetTunnel)
+            {
                 continue;
             }
             let (Some(public_key), Some(internal_ipv4), Some(internal_ipv6)) = (
@@ -5226,6 +5365,25 @@ where
         )));
     }
     Ok(host)
+}
+
+async fn require_host_capability<S>(
+    state: &AegisState<S>,
+    host_id: &HostId,
+    capability: aegis_dto::platform::Capability,
+) -> Result<(), ApiError>
+where
+    S: AegisStore + Clone + Send + Sync + 'static,
+{
+    state
+        .store
+        .fetch_aegis_host(host_id)
+        .await
+        .map_err(ApiError::Internal)?
+        .ok_or_else(|| ApiError::NotFound(format!("unknown Aegis host `{host_id}`")))?
+        .platform
+        .require(capability)
+        .map_err(|error| ApiError::Conflict(error.to_string()))
 }
 
 fn next_egress_revision(current: u64) -> Result<u64, ApiError> {
@@ -5463,7 +5621,11 @@ where
             hosts
                 .get(&member.host_id)
                 .filter(|host| {
-                    !host.pending && host.ssh.as_ref().and_then(|ssh| ssh.port) == Some(22)
+                    !host.pending
+                        && host
+                            .platform
+                            .supports(aegis_dto::platform::Capability::DirectGateway)
+                        && host.ssh.as_ref().and_then(|ssh| ssh.port) == Some(22)
                 })
                 .map(|_| member.host_id)
         })
@@ -6445,12 +6607,17 @@ where
         .map_err(ApiError::Internal)?
         .ok_or_else(|| ApiError::NotFound(format!("unknown Aegis enrollment `{host_id}`")))?;
     let network = network_config(&state.cfg, &enrollment.network)?.clone();
+    request
+        .platform
+        .require_role(enrollment.mode)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let prepared = state
         .store
         .prepare_aegis_enrollment(
             &host_id,
             &principal.session_id,
             AegisEnrollmentPreparation {
+                platform: request.platform,
                 host_public_key: host_public_key.as_deref(),
                 wireguard_public_key: &wireguard_public_key,
                 wireguard_endpoints: &wireguard_endpoints,
@@ -6806,6 +6973,22 @@ where
         &state.api_audience,
         &host_id,
     )?;
+    if req.ssh_lockdown_enabled {
+        require_host_capability(
+            &state,
+            &host_id,
+            aegis_dto::platform::Capability::SshLockdown,
+        )
+        .await?;
+    }
+    if !req.direct_gateway.peers.is_empty() {
+        require_host_capability(
+            &state,
+            &host_id,
+            aegis_dto::platform::Capability::DirectGateway,
+        )
+        .await?;
+    }
     let now_unix = OffsetDateTime::now_utc().unix_timestamp();
     let messages = normalize_host_messages(req.messages)?;
     let agent = normalize_agent_status(req.agent, now_unix)?;
@@ -7352,6 +7535,7 @@ where
     let agent = existing.agent.clone();
     let egress_public_key = existing.egress_public_key.clone();
     let host = AegisHostRecord {
+        platform: existing.platform,
         host_id,
         aliases: req.aliases,
         ssh: req.ssh.map(|ssh| AegisHostRecordSsh {
@@ -7397,6 +7581,15 @@ where
     let config = network_config(&state.cfg, &network)?.clone();
     let wireguard_pool = config.wireguard.address_pool();
     let mode = req.mode;
+    require_host_capability(
+        &state,
+        &host_id,
+        match mode {
+            AegisHostMode::Leaf => aegis_dto::platform::Capability::MeshLeaf,
+            AegisHostMode::Hub => aegis_dto::platform::Capability::Hub,
+        },
+    )
+    .await?;
     let (
         wireguard_public_key,
         requested_wireguard_ipv4,
@@ -7707,6 +7900,7 @@ where
 
 fn host_summary_from_record(record: AegisHostRecord) -> Result<AegisHost, ApiError> {
     let AegisHostRecord {
+        platform,
         aliases,
         ssh,
         egress_public_key,
@@ -7719,6 +7913,7 @@ fn host_summary_from_record(record: AegisHostRecord) -> Result<AegisHost, ApiErr
         ..
     } = record;
     Ok(AegisHost {
+        platform,
         aliases,
         ssh: ssh.map(|ssh| AegisHostSsh {
             port: ssh.port,

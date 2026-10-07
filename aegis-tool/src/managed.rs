@@ -10,7 +10,10 @@ use capulus::managed::{
 };
 use semver::Version;
 
+#[cfg(target_os = "linux")]
 pub(crate) const MANAGEMENT_SOCKET_PATH: &str = "/run/aegis/capulus.sock";
+#[cfg(target_os = "macos")]
+pub(crate) const MANAGEMENT_SOCKET_PATH: &str = "/private/var/run/aegis-capulus.sock";
 pub(crate) const MANAGEMENT_SOCKET_NAME: &str = "aegis-capulus.socket";
 pub(crate) const APPLICATION_SOCKET_NAME: &str = "aegis-agent.socket";
 pub(crate) const ACCESS_GROUP: &str = "aegis";
@@ -23,7 +26,7 @@ pub(crate) fn product() -> Result<ManagedProduct> {
             .context("aegis-tool package version is not semantic")?,
         program: ManagedProgramOptions {
             cargo_binary: "aegis".to_string(),
-            installed_path: PathBuf::from(aegis_dto::layout::SYSTEM_BINARY_PATH),
+            installed_path: PathBuf::from(crate::platform::SYSTEM_BINARY_PATH),
             command_prefix: vec!["agent".to_string()],
         },
         service: AgentServiceOptions {
@@ -34,6 +37,7 @@ pub(crate) fn product() -> Result<ManagedProduct> {
                 aegis_dto::layout::AGENT_CONFIG_PATH.to_string(),
             ],
             restart_delay: Duration::from_secs(60),
+            #[cfg(target_os = "linux")]
             network_required: true,
             state_directory_mode: 0o755,
             hardening: ServiceHardening::SystemNetworkController,
@@ -50,7 +54,8 @@ pub(crate) fn product() -> Result<ManagedProduct> {
         },
         redeploy: ManagedRedeployOptions {
             build_timeout: Duration::from_secs(40 * 60),
-            ..ManagedRedeployOptions::default()
+            #[cfg(target_os = "linux")]
+            maximum_tasks: ManagedRedeployOptions::default().maximum_tasks,
         },
     }
     .validate()
@@ -95,13 +100,30 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn manifest_uses_one_launch_daemon_with_both_authenticated_sockets() {
+        let product = product().unwrap();
+        let manifest = product.installation_manifest();
+        manifest.validate("aegis").unwrap();
+        assert_eq!(manifest.enable_units, ["aegis-agent.plist"]);
+        assert_eq!(manifest.files.len(), 2);
+        let capulus::managed::ManagedFile::Text { contents, .. } = &manifest.files[1] else {
+            panic!("launchd manifest")
+        };
+        assert!(contents.contains("/private/var/run/aegis-agent.sock"));
+        assert!(contents.contains("/private/var/run/aegis-capulus.sock"));
+        assert!(contents.contains("<integer>384</integer>"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
     fn manifest_uses_the_single_program_and_both_systemd_sockets() {
         let product = product().unwrap();
         let manifest = product.installation_manifest();
 
         assert_eq!(
             product.program().installed_path(),
-            std::path::Path::new(aegis_dto::layout::SYSTEM_BINARY_PATH)
+            std::path::Path::new(crate::platform::SYSTEM_BINARY_PATH)
         );
         assert!(manifest.files.iter().any(|file| matches!(
             file,

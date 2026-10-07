@@ -15,6 +15,6 @@ GCP and Firestore administration dependencies stay in that separate package.
 Use `aegis --help` and `aegis manage --help` for commands. Progress goes to stderr;
 JSON and credentials go to stdout. `--progress plain --color never` gives stable logs.
 
-[Setup](../docs/setup.md) · [Validation](tests/VALIDATION.md)
+[Setup](../docs/setup.md) · [Platforms](../docs/platforms.md) · [Validation](tests/VALIDATION.md)
 
 Licensed under [AGPL-3.0-only](LICENSE).

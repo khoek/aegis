@@ -1072,6 +1072,7 @@ struct StoredAegisDirectGatewayReport {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredAegisHostRecord {
+    pub platform: aegis_dto::platform::HostPlatform,
     pub aliases: HostAliases,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<StoredAegisHostSsh>,
@@ -1185,6 +1186,7 @@ fn domain_direct_gateway_report(
 
 fn stored_aegis_host_record_from_domain(host: &AegisHostRecord) -> StoredAegisHostRecord {
     StoredAegisHostRecord {
+        platform: host.platform,
         aliases: host.aliases.clone(),
         ssh: host.ssh.as_ref().map(|ssh| StoredAegisHostSsh {
             port: ssh.port,
@@ -1226,6 +1228,7 @@ fn domain_aegis_host_record_from_stored(
         .updated
         .ok_or_else(|| anyhow::anyhow!("host `{host_id}` is missing updated"))?;
     Ok(AegisHostRecord {
+        platform: stored.platform.validate()?,
         host_id,
         aliases: stored.aliases,
         ssh: stored.ssh.map(|ssh| AegisHostRecordSsh {
@@ -1977,6 +1980,7 @@ impl AegisStore for AegisDb {
         preparation: AegisEnrollmentPreparation<'_>,
     ) -> Result<AegisEnrollmentPrepared, AegisEnrollmentWriteError> {
         let AegisEnrollmentPreparation {
+            platform,
             host_public_key,
             wireguard_public_key,
             wireguard_endpoints,
@@ -2025,6 +2029,7 @@ impl AegisStore for AegisDb {
         if let (Some(host), Some(member)) = (existing_host.as_ref(), existing_member.as_ref()) {
             if !host.pending
                 || !member.pending
+                || host.platform != platform
                 || !prepared_host_matches_enrollment(&enrollment, host, member)
                 || host.ssh.as_ref().and_then(|ssh| ssh.public_key.as_deref()) != host_public_key
                 || member.wireguard_public_key.as_deref() != Some(wireguard_public_key)
@@ -2083,6 +2088,7 @@ impl AegisStore for AegisDb {
         }
         let principal = format!("enrollment:{host_id}");
         let host = AegisHostRecord {
+            platform,
             host_id: *host_id,
             aliases: enrollment.aliases.clone(),
             ssh: enrollment.ssh.as_ref().map(|ssh| AegisHostRecordSsh {
@@ -4137,6 +4143,10 @@ mod tests {
         );
 
         let host = AegisHostRecord {
+            platform: aegis_dto::platform::HostPlatform {
+                operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                architecture: aegis_dto::platform::Architecture::X86_64,
+            },
             host_id: test_host_id(3),
             aliases: test_aliases("host-a"),
             ssh: None,
@@ -4394,6 +4404,10 @@ mod tests {
     #[test]
     fn stored_aegis_records_keep_global_and_network_state_separate() {
         let host = AegisHostRecord {
+            platform: aegis_dto::platform::HostPlatform {
+                operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                architecture: aegis_dto::platform::Architecture::X86_64,
+            },
             host_id: test_host_id(1),
             aliases: test_aliases("leaf-01"),
             ssh: Some(AegisHostRecordSsh {

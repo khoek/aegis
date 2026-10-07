@@ -5,41 +5,19 @@ use capulus::shell::shell_quote as sh_quote;
 use crate::cli::AgentMode;
 
 use super::{
-    REMOTE_HOST_CERT_PATH, REMOTE_HOST_KEY_PATH, WIREGUARD_DIR, WIREGUARD_PRIVATE_KEY_PATH,
-    WIREGUARD_PUBLIC_KEY_PATH, install, mesh_bootstrap, system, wireguard,
+    REMOTE_HOST_CERT_PATH, REMOTE_HOST_KEY_PATH, install, mesh_bootstrap, system, wireguard,
 };
 
 pub(super) struct RemotePrepareHostScript;
 
 impl RemotePrepareHostScript {
     pub(super) fn render(publish_ssh: bool) -> String {
-        let ssh_identity = if publish_ssh {
-            format!(
-                "sudo test -f {REMOTE_HOST_KEY_PATH} || sudo ssh-keygen -q -t ed25519 -N '' -f {REMOTE_HOST_KEY_PATH}\n"
-            )
-        } else {
-            String::new()
-        };
         format!(
-            "source /etc/os-release\n\
-             [[ \"${{ID:-}}\" == \"ubuntu\" ]]\n\
-             sudo -v\n\
-             {bird3_repo}\
-             retry sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \\\n\
-               --no-install-recommends build-essential bird3 ca-certificates curl \\\n\
-               libssl-dev pkg-config python3 wireguard\n\
-             sudo install -d -m 755 {WIREGUARD_DIR}\n\
-             if ! sudo test -f {WIREGUARD_PRIVATE_KEY_PATH}; then\n\
-               sudo sh -ceu 'umask 077; wg genkey > {WIREGUARD_PRIVATE_KEY_PATH}'\n\
-             fi\n\
-             if ! sudo test -f {WIREGUARD_PUBLIC_KEY_PATH}; then\n\
-               sudo sh -ceu 'wg pubkey < {WIREGUARD_PRIVATE_KEY_PATH} > {WIREGUARD_PUBLIC_KEY_PATH}'\n\
-             fi\n\
-             sudo chmod 600 {WIREGUARD_PRIVATE_KEY_PATH}\n\
-             sudo chmod 644 {WIREGUARD_PUBLIC_KEY_PATH}\n\
-             {ssh_identity}",
-            bird3_repo = system::Bird3Repository::with_sudo().setup_script(),
-            ssh_identity = ssh_identity,
+            "{}\n{}\n{}\nsudo \"$system_aegis\" agent prepare-identity {}\n",
+            system::prerequisites_script(true),
+            system_program_bootstrap_script(true),
+            crate::platform::BINARY_SHELL_ASSIGNMENT,
+            if publish_ssh { "--inbound-ssh" } else { "" }
         )
     }
 }
@@ -105,7 +83,10 @@ impl<'a> RemoteFinalizeInstall<'a> {
         }
         let agent_refresh_token_env =
             install::agent_refresh_token_env_assignment(self.agent_token)?;
-        let wireguard_setup = if self.hub_peers.is_empty() {
+        let wireguard_setup = if self.hub_peers.is_empty()
+            || self.pending_host.platform.operating_system
+                == aegis_dto::platform::OperatingSystem::MacOs
+        {
             String::new()
         } else {
             mesh_bootstrap::BootstrapMeshScript::new(
@@ -131,8 +112,6 @@ sudo chmod 644 {REMOTE_HOST_CERT_PATH}\n"
             "set -euo pipefail\n\
              sudo -v\n\
              login_user={login_user}\n\
-             login_home=\"$(getent passwd \"$login_user\" | cut -d: -f6)\"\n\
-             test -n \"$login_home\"\n\
              {wireguard_setup}\n\
              {tool_bootstrap}\
              {host_certificate_bootstrap}\
@@ -143,7 +122,7 @@ sudo chmod 644 {REMOTE_HOST_CERT_PATH}\n"
             install_args = install_args,
             tool_bootstrap = system_program_bootstrap_script(true),
             login_user = sh_quote(self.login_principal),
-            system_binary = aegis_dto::layout::SYSTEM_BINARY_PATH,
+            system_binary = crate::platform::system_binary_path(self.pending_host.platform),
             wireguard_setup = wireguard_setup,
         ))
     }
@@ -160,12 +139,10 @@ pub fn system_program_bootstrap_script(use_sudo: bool) -> String {
 
 pub fn system_agent_activation_script() -> String {
     format!(
-        "sudo systemctl enable --now {application_socket} {management_socket}\n\
-         sudo systemctl enable --now {service}\n\
-         sudo systemctl is-active --quiet {application_socket} {management_socket} {service}\n",
+        "case $(uname -s) in\nDarwin)\n  if ! sudo launchctl print system/aegis-agent >/dev/null 2>&1; then\n    sudo launchctl bootstrap system /Library/LaunchDaemons/aegis-agent.plist\n  fi\n  sudo launchctl print system/aegis-agent >/dev/null\n  ;;\nLinux)\n  sudo systemctl enable --now {application_socket} {management_socket}\n  sudo systemctl enable --now {service}\n  sudo systemctl is-active --quiet {application_socket} {management_socket} {service}\n  ;;\n*) exit 1 ;;\nesac\n",
         application_socket = sh_quote(crate::managed::APPLICATION_SOCKET_NAME),
         management_socket = sh_quote(crate::managed::MANAGEMENT_SOCKET_NAME),
-        service = sh_quote(super::AEGIS_AGENT_SERVICE_NAME),
+        service = sh_quote(super::AEGIS_AGENT_SERVICE_NAME)
     )
 }
 

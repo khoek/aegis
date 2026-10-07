@@ -1142,27 +1142,34 @@ pub(super) fn remote_redeploy_command(
     let target_version = super::sh_quote(&target_version.to_string());
     let update_user = if update_user {
         format!(
-            "if ! /usr/local/bin/aegis advanced update-user --version {target_version} --json >/dev/null; then\n  echo 'remote user CLI update failed; system redeploy was not scheduled' >&2\n  exit 1\nfi\n\
+            "if ! \"$system_aegis\" advanced update-user --version {target_version} --json >/dev/null; then\n  echo 'remote user CLI update failed; system redeploy was not scheduled' >&2\n  exit 1\nfi\n\
              echo 'remote user CLI ready; scheduling system redeploy' >&2\n"
         )
     } else {
         String::new()
     };
     format!(
-        "if ! test -S {}; then\n  echo 'the remote Capulus management socket is unavailable' >&2\n  exit 1\nfi\n\
+        "{native_paths}\nif ! test -S \"$management_socket\"; then\n  echo 'the remote Capulus management socket is unavailable' >&2\n  exit 1\nfi\n\
          {update_user}\
-         if test \"$(id -u)\" -eq 0 || ! test -e \"$HOME/{}\"; then\n  aegis_program={}\nelse\n  aegis_program=\"$HOME/{}\"\nfi\n\
+         if test \"$(id -u)\" -eq 0 || ! test -e \"$HOME/{}\"; then\n  aegis_program=\"$system_aegis\"\nelse\n  aegis_program=\"$HOME/{}\"\nfi\n\
          exec \"$aegis_program\" advanced redeploy --version {target_version} --json\n",
-        super::sh_quote(crate::managed::MANAGEMENT_SOCKET_PATH),
         aegis_dto::layout::USER_BINARY_RELATIVE_PATH,
-        super::sh_quote(aegis_dto::layout::SYSTEM_BINARY_PATH),
         aegis_dto::layout::USER_BINARY_RELATIVE_PATH,
+        native_paths = remote_native_paths(),
+    )
+}
+
+fn remote_native_paths() -> String {
+    format!(
+        "{}\ncase $(uname -s) in Darwin) management_socket=/private/var/run/aegis-capulus.sock ;; Linux) management_socket=/run/aegis/capulus.sock ;; esac",
+        crate::platform::BINARY_SHELL_ASSIGNMENT
     )
 }
 
 fn remote_user_update_command(target_version: &RedeployVersion) -> String {
     format!(
-        "exec /usr/local/bin/aegis advanced update-user --version {} --json\n",
+        "{}\nexec \"$system_aegis\" advanced update-user --version {} --json\n",
+        crate::platform::BINARY_SHELL_ASSIGNMENT,
         super::sh_quote(&target_version.to_string()),
     )
 }
@@ -1261,7 +1268,7 @@ mod tests {
     #[test]
     fn remote_user_update_uses_the_root_owned_program_without_sudo() {
         let command = remote_user_update_command(&RedeployVersion::explicit("0.1.190").unwrap());
-        assert!(command.contains("/usr/local/bin/aegis advanced update-user"));
+        assert!(command.contains("\"$system_aegis\" advanced update-user"));
         assert!(!command.contains("sudo"));
     }
 
@@ -1269,9 +1276,9 @@ mod tests {
     fn remote_redeploy_updates_the_user_and_schedules_in_one_ssh_session() {
         let command = remote_redeploy_command(&RedeployVersion::explicit("0.1.175").unwrap(), true);
 
-        assert!(command.contains("test -S /run/aegis/capulus.sock"));
+        assert!(command.contains("test -S \"$management_socket\""));
         let update = command
-            .find("/usr/local/bin/aegis advanced update-user --version 0.1.175 --json >/dev/null")
+            .find("\"$system_aegis\" advanced update-user --version 0.1.175 --json >/dev/null")
             .unwrap();
         let schedule = command
             .find("exec \"$aegis_program\" advanced redeploy --version 0.1.175 --json")
@@ -1282,7 +1289,7 @@ mod tests {
         );
         assert!(command.contains("remote user CLI ready; scheduling system redeploy"));
         assert!(command.contains("aegis_program=\"$HOME/.cargo/bin/aegis\""));
-        assert!(command.contains("aegis_program=/usr/local/bin/aegis"));
+        assert!(command.contains("aegis_program=\"$system_aegis\""));
         assert!(command.contains("exec \"$aegis_program\" advanced redeploy"));
         assert!(command.contains("advanced redeploy --version 0.1.175 --json"));
         assert!(!command.contains("exec /usr/local/bin/aegis advanced redeploy"));

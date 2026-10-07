@@ -53,6 +53,10 @@ pub(super) async fn start(
     Json(request): Json<Request>,
 ) -> Result<(StatusCode, Json<Snapshot>), AgentHttpError> {
     request.validate().map_err(AgentHttpError)?;
+    state
+        .platform
+        .require(aegis_dto::platform::Capability::InternetTunnel)
+        .map_err(AgentHttpError)?;
     let bearer = forwarded_user_bearer(&headers).map_err(AgentHttpError)?;
     let owner = peer
         .uid

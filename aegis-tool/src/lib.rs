@@ -12,13 +12,16 @@ mod invitation;
 mod locks;
 mod managed;
 mod metadata;
+mod platform;
 mod principal_grants;
 mod redeploy_version;
 mod release;
+mod ssh_service;
 mod system_user;
 mod tunnel_operation;
 pub mod ui;
 mod wireguard_endpoint;
+mod wireguard_keys;
 
 use std::sync::Arc;
 
@@ -69,6 +72,31 @@ pub fn run_cli() -> capulus::CliTermination {
 
 fn run_agent(command: AgentCommands) -> Result<()> {
     match command {
+        AgentCommands::PrepareIdentity { inbound_ssh } => {
+            require_agent_root()?;
+            crate::platform::detect()?;
+            wireguard_keys::Keypair::ensure(
+                std::path::Path::new("/etc/aegis/wireguard/wg-aegis.key"),
+                std::path::Path::new("/etc/aegis/wireguard/wg-aegis.pub"),
+            )?;
+            if inbound_ssh {
+                let key = std::path::Path::new("/etc/ssh/ssh_host_ed25519_key");
+                if !key.exists() {
+                    command::require_success(
+                        "create SSH host identity",
+                        std::process::Command::new("/usr/bin/ssh-keygen")
+                            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                            .arg(key),
+                    )?;
+                }
+            }
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        AgentCommands::WireguardWorker { interface } => {
+            require_agent_root()?;
+            agent::macos::wireguard_worker(&interface)
+        }
         AgentCommands::Serve(args) => {
             require_agent_root()?;
             let status = agent::run(&args)?;

@@ -6,7 +6,7 @@ use crate::api::{ApiClient, AuthenticatedApiClient};
 use crate::cli::{Choice, InstallArgs};
 use crate::config::{
     AgentAuthConfig, AgentBirdConfigOptions, AgentConfig, AgentConfigOptions,
-    AgentHostConfigOptions, SHARED_CACHE_PATH, agent_refresh_token_env_value,
+    AgentHostConfigOptions, AgentRoutingOptions, SHARED_CACHE_PATH, agent_refresh_token_env_value,
     agent_refresh_token_from_encoded_value, canonical_saved_api_base_url, persist_agent_config,
     resolve_api_base,
 };
@@ -18,10 +18,9 @@ use capulus::shell::shell_quote as sh_quote;
 
 use super::{
     AEGIS_AGENT_DIR, AEGIS_AGENT_REFRESH_TOKEN_ENV, AEGIS_AGENT_SERVICE_NAME,
-    AEGIS_AGENT_UNIT_PATH, AEGIS_AUTHORIZED_PRINCIPALS_DIR, AEGIS_CLIENT_CA_PATH, AEGIS_DIR_ETC,
-    AEGIS_SSHD_DROPIN, BIRD_CONFIG_PATH, BIRD_SERVICE_NAME, REMOTE_HOST_CERT_PATH,
-    REMOTE_HOST_KEY_PATH, WIREGUARD_DIR, WIREGUARD_UNIT_TEMPLATE_PATH, line_with_newline,
-    local_state, system,
+    AEGIS_AUTHORIZED_PRINCIPALS_DIR, AEGIS_CLIENT_CA_PATH, AEGIS_DIR_ETC, AEGIS_SSHD_DROPIN,
+    BIRD_SERVICE_NAME, REMOTE_HOST_CERT_PATH, REMOTE_HOST_KEY_PATH, WIREGUARD_DIR,
+    WIREGUARD_UNIT_TEMPLATE_PATH, line_with_newline, local_state, system,
 };
 
 pub(super) fn load_agent_config() -> Result<AgentConfig> {
@@ -176,30 +175,28 @@ impl ResolvedInstall {
     }
 
     fn run(self, workflow: &Task) -> Result<String> {
-        workflow.set_phase("validating the local Ubuntu host");
-        system::LocalRoot::require_ubuntu()?;
+        workflow.set_phase("validating the local host");
+        system::LocalRoot::require_supported_platform()?;
         if self.key.is_some() ^ self.cert.is_some() {
             bail!("`aegis advanced install` requires `--key` and `--cert` together");
         }
         workflow.set_phase("installing host prerequisites");
-        system::LocalRoot::install_ubuntu_packages_without_sudo(&[
-            "build-essential",
-            "ca-certificates",
-            "curl",
-            "iputils-ping",
-            "iptables",
-            "libssl-dev",
-            "nftables",
-            "openssh-server",
-            "pkg-config",
-            "systemd-resolved",
-            "wireguard",
-            "bird3",
-        ])?;
-        crate::apparmor::ensure_wireguard_access()?;
+        system::LocalRoot::install_prerequisites_as_root()?;
+        if crate::platform::detect()?.operating_system
+            != aegis_dto::platform::OperatingSystem::MacOs
+        {
+            crate::apparmor::ensure_wireguard_access()?;
+        }
+        if self.inbound_ssh {
+            crate::ssh_service::prepare_inbound()?;
+        }
 
         workflow.set_phase("configuring SSH certificate authentication");
         self.apply_ssh_assets()?;
+        #[cfg(target_os = "macos")]
+        if self.inbound_ssh {
+            crate::ssh_service::ensure_certificate_integration()?;
+        }
         workflow.set_phase("configuring the initial Aegis user grant");
         self.apply_initial_principal_grant()?;
 
@@ -214,7 +211,9 @@ impl ResolvedInstall {
         self.install_agent_service()?;
 
         workflow.set_phase("reloading sshd and persisting managed host state");
-        system::Sshd::reload()?;
+        if self.inbound_ssh {
+            system::Sshd::reload()?;
+        }
         local_state::ManagedHostStateStore::persist(&self.api_base, self.host_id)?;
         let message = if self.staged_enrollment {
             "Aegis installation staged; the agent remains stopped until enrollment activation"
@@ -288,9 +287,15 @@ impl ResolvedInstall {
                 authorized_principals_dir: PathBuf::from(AEGIS_AUTHORIZED_PRINCIPALS_DIR),
                 sshd_dropin_path: PathBuf::from(AEGIS_SSHD_DROPIN),
             },
-            bird: AgentBirdConfigOptions {
-                config_path: PathBuf::from(BIRD_CONFIG_PATH),
-                service: BIRD_SERVICE_NAME.to_string(),
+            routing: if cfg!(target_os = "macos") {
+                AgentRoutingOptions::Babel
+            } else {
+                AgentRoutingOptions::Bird(AgentBirdConfigOptions {
+                    config_path: PathBuf::from(crate::platform::bird_config_path(
+                        crate::platform::detect()?,
+                    )?),
+                    service: BIRD_SERVICE_NAME.to_string(),
+                })
             },
         }
         .try_into()?;
@@ -300,23 +305,45 @@ impl ResolvedInstall {
         capulus::store::ensure_directory(Path::new("/var/lib/aegis"), Some(0o755))?;
         persist_agent_config(Path::new(AGENT_CONFIG_PATH), &config)?;
         management_operator.apply()?;
-        system::TextFile::new(Path::new(AEGIS_AGENT_UNIT_PATH))
-            .write_atomic(&managed_unit_contents(AEGIS_AGENT_UNIT_PATH)?, 0o644)?;
-        system::TextFile::new(Path::new("/etc/systemd/system/aegis-agent.socket")).write_atomic(
-            &managed_unit_contents("/etc/systemd/system/aegis-agent.socket")?,
-            0o644,
-        )?;
-        system::TextFile::new(Path::new("/etc/systemd/system/aegis-capulus.socket")).write_atomic(
-            &managed_unit_contents("/etc/systemd/system/aegis-capulus.socket")?,
-            0o644,
-        )?;
-        system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH))
-            .write_atomic(&aegis_dto::managed_wireguard_systemd_unit_contents(), 0o644)?;
-        system::Systemd::daemon_reload()?;
-        if !self.staged_enrollment {
-            system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).enable_now()?;
-            system::SystemdUnit::new(crate::managed::MANAGEMENT_SOCKET_NAME).enable_now()?;
-            system::SystemdUnit::new(AEGIS_AGENT_SERVICE_NAME).enable_now()?;
+        let product = crate::managed::product()?;
+        for file in product.installation_manifest().files {
+            if let ManagedFile::Text {
+                destination,
+                contents,
+                mode,
+            } = file
+            {
+                system::TextFile::new(&destination).write_atomic(&contents, mode)?;
+            }
+        }
+        if cfg!(target_os = "macos") {
+            capulus::store::ensure_directory(Path::new("/private/var/run/aegis"), Some(0o755))?;
+            if !self.staged_enrollment
+                && !crate::command::run_capture(
+                    std::process::Command::new("/bin/launchctl")
+                        .args(["print", "system/aegis-agent"]),
+                )?
+                .status
+                .success()
+            {
+                crate::command::require_success(
+                    "start Aegis launch daemon",
+                    std::process::Command::new("/bin/launchctl").args([
+                        "bootstrap",
+                        "system",
+                        "/Library/LaunchDaemons/aegis-agent.plist",
+                    ]),
+                )?;
+            }
+        } else {
+            system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH))
+                .write_atomic(&aegis_dto::managed_wireguard_systemd_unit_contents(), 0o644)?;
+            system::Systemd::daemon_reload()?;
+            if !self.staged_enrollment {
+                system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).enable_now()?;
+                system::SystemdUnit::new(crate::managed::MANAGEMENT_SOCKET_NAME).enable_now()?;
+                system::SystemdUnit::new(AEGIS_AGENT_SERVICE_NAME).enable_now()?;
+            }
         }
         Ok(())
     }
@@ -415,12 +442,12 @@ fn validate_system_aegis_binary() -> Result<()> {
     let product = crate::managed::product()?;
     let installed = product.program().trusted_installed_path()?;
     let expected = fs::canonicalize(installed)?;
-    let running = fs::canonicalize("/proc/self/exe")
+    let running = fs::canonicalize(std::env::current_exe()?)
         .context("failed to resolve the running Aegis executable")?;
     if running != expected {
         bail!(
             "privileged Aegis installation must run from the trusted system binary at {}",
-            aegis_dto::layout::SYSTEM_BINARY_PATH
+            crate::platform::SYSTEM_BINARY_PATH
         );
     }
     Ok(())
@@ -430,6 +457,7 @@ fn host_public_key_path(private_key_path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.pub", private_key_path.display()))
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn managed_unit_contents(destination: &str) -> Result<String> {
     crate::managed::product()?
         .installation_manifest()
@@ -446,13 +474,13 @@ fn managed_unit_contents(destination: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("managed unit declaration omitted {destination}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::managed_unit_contents;
 
     #[test]
     fn agent_systemd_unit_retries_forever_at_low_cadence() {
-        let unit = managed_unit_contents(super::AEGIS_AGENT_UNIT_PATH).unwrap();
+        let unit = managed_unit_contents(crate::app::AEGIS_AGENT_UNIT_PATH).unwrap();
         assert!(unit.contains("User=root\n"));
         assert!(unit.contains("Group=root\n"));
         assert!(unit.contains("Restart=always\n"));

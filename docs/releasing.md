@@ -45,3 +45,6 @@ FIRESTORE_EMULATOR_HOST=127.0.0.1:8791 cargo test -p aegis-api -- --ignored
 Fleet upgrades are an explicit operator action through
 `aegis advanced fleet redeploy --version VERSION`. Verify healthy agents and SSH
 access before retiring the previous deployment.
+
+Platform/schema changes require the explicit [platform transition](../tools/migrations/README.md)
+and [native acceptance](../aegis-tool/tests/PLATFORMS.md) before publication.

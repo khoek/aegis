@@ -1,5 +1,6 @@
 pub mod configuration;
 pub mod identity;
+pub mod platform;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1475,6 +1476,7 @@ pub mod protocol {
     #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(deny_unknown_fields)]
     pub struct AegisEnrollmentPrepareRequest {
+        pub platform: crate::platform::HostPlatform,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub host_public_key: Option<String>,
         pub wireguard_public_key: String,
@@ -1818,6 +1820,7 @@ pub mod protocol {
     #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(deny_unknown_fields)]
     pub struct AegisHost {
+        pub platform: crate::platform::HostPlatform,
         pub aliases: HostAliases,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ssh: Option<AegisHostSsh>,
@@ -1849,6 +1852,7 @@ pub mod protocol {
     #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(deny_unknown_fields)]
     pub struct AegisNetworkHost {
+        pub platform: crate::platform::HostPlatform,
         pub mode: AegisHostMode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ssh: Option<AegisNetworkHostSsh>,
@@ -1901,6 +1905,7 @@ pub mod protocol {
                 ssh,
                 wireguard: member.wireguard,
                 egress: host.egress,
+                platform: host.platform,
                 internal: member.internal,
                 messages: host.report.messages,
                 agent: host.report.agent,

@@ -196,6 +196,13 @@ pub(crate) fn run_worker() -> Result<()> {
     })
 }
 
+#[cfg(target_os = "macos")]
+fn enter_private_network_namespace() -> Result<()> {
+    crate::platform::detect()?.require(aegis_dto::platform::Capability::InternetTunnel)?;
+    unreachable!("macOS does not support the egress probe")
+}
+
+#[cfg(target_os = "linux")]
 fn enter_private_network_namespace() -> Result<()> {
     let parent = unsafe { libc::getppid() };
     ensure!(

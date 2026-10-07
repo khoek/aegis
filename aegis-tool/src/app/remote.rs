@@ -17,11 +17,20 @@ use crate::command::{
 use crate::ui;
 
 use super::{
-    REMOTE_HOST_KEY_PATH, REMOTE_SUDO_PASSWORD_HELPER_PATH, RemoteTarget, SYSTEM_AEGIS_BIN,
-    WIREGUARD_PUBLIC_KEY_PATH,
+    REMOTE_HOST_KEY_PATH, REMOTE_SUDO_PASSWORD_HELPER_PATH, RemoteTarget, WIREGUARD_PUBLIC_KEY_PATH,
 };
 
 pub(super) trait RemoteBootstrapSession {
+    fn platform(&self) -> Result<aegis_dto::platform::HostPlatform> {
+        let output = self.run_shell_capture(crate::platform::IDENTIFICATION_SCRIPT)?;
+        anyhow::ensure!(
+            output.status.success(),
+            "remote platform probe failed: {}",
+            output.stderr.trim()
+        );
+        crate::platform::parse_identification(&output.stdout)
+    }
+
     fn run_shell_capture(&self, shell_body: &str) -> Result<CommandOutput>;
 
     fn run_shell_capture_with_input(&self, shell_body: &str, input: &[u8])
@@ -43,7 +52,8 @@ pub(super) trait RemoteBootstrapSession {
         let output = self.run_shell_capture(&format!(
             "WIREGUARD_PUBLIC_KEY=\"$(cat {WIREGUARD_PUBLIC_KEY_PATH})\"\n\
              printf 'WIREGUARD_PUBLIC_KEY=%s\\n' \"$WIREGUARD_PUBLIC_KEY\"\n\
-             {host_public_key}"
+             {host_public_key}\n{}",
+            crate::platform::IDENTIFICATION_SCRIPT
         ))?;
         EnrollState::parse(&output.stdout, publish_ssh)
     }
@@ -183,19 +193,18 @@ impl<'a> BootstrapSession<'a> {
 
     pub(super) fn has_trusted_system_aegis(&self) -> Result<bool> {
         let output = self.run_shell_capture(&format!(
-            "if test -f {installed} && test ! -L {installed} && test -x {installed} && \\\n               test \"$(stat -c '%u:%g' {installed})\" = '0:0' && \\\n               test \"$(stat -c '%a' {installed})\" = '755'; then\n\
-               printf 'trusted\\n'\n\
-             fi\n",
-            installed = sh_quote(SYSTEM_AEGIS_BIN),
+            "{}\ncase $(uname -s) in Darwin) owner=$(stat -f '%u:%g' \"$system_aegis\"); mode=$(stat -f '%Lp' \"$system_aegis\") ;; Linux) owner=$(stat -c '%u:%g' \"$system_aegis\"); mode=$(stat -c '%a' \"$system_aegis\") ;; esac\n\
+             if test -f \"$system_aegis\" && test ! -L \"$system_aegis\" && test -x \"$system_aegis\" && test \"$owner\" = 0:0 && test \"$mode\" = 755; then printf 'trusted\\n'; fi\n",
+             crate::platform::BINARY_SHELL_ASSIGNMENT,
         ))?;
         Ok(output.stdout.trim() == "trusted")
     }
 
     pub(super) fn run_aegis_unenroll(&self, api_base: &str, host_alias: &str) -> Result<()> {
         let remote_command = SudoScript::new(&format!(
-            "sudo -v\n\
-             sudo -- {} --api-base {} manage unenroll {} --local --skip-api-delete\n",
-            sh_quote(SYSTEM_AEGIS_BIN),
+            "{}\nsudo -v\n\
+             sudo -- \"$system_aegis\" --api-base {} manage unenroll {} --local --skip-api-delete\n",
+            crate::platform::BINARY_SHELL_ASSIGNMENT,
             sh_quote(api_base),
             sh_quote(host_alias),
         ))
@@ -378,6 +387,7 @@ impl<'a> ShellCommand<'a> {
 
 #[derive(Debug, Clone)]
 pub(super) struct EnrollState {
+    pub(super) platform: aegis_dto::platform::HostPlatform,
     pub(super) wireguard_public_key: String,
     pub(super) host_public_key: Option<String>,
 }
@@ -386,6 +396,9 @@ impl EnrollState {
     fn parse(content: &str, publish_ssh: bool) -> Result<Self> {
         let mut wireguard_public_key = None;
         let mut host_public_key = None;
+        let mut kernel = None;
+        let mut architecture = None;
+        let mut distro = None;
         for line in content
             .lines()
             .map(str::trim)
@@ -397,11 +410,19 @@ impl EnrollState {
             match name {
                 "WIREGUARD_PUBLIC_KEY" => wireguard_public_key = Some(value.to_string()),
                 "HOST_PUBLIC_KEY" => host_public_key = Some(value.to_string()),
+                "PLATFORM_KERNEL" => kernel = Some(value),
+                "PLATFORM_ARCH" => architecture = Some(value),
+                "PLATFORM_DISTRO" => distro = Some(format!("ID={value}")),
                 _ => bail!("unexpected remote enroll state field `{name}`"),
             }
         }
 
         Ok(Self {
+            platform: crate::platform::identify(
+                kernel.context("remote enroll state is missing PLATFORM_KERNEL")?,
+                architecture.context("remote enroll state is missing PLATFORM_ARCH")?,
+                distro.as_deref(),
+            )?,
             wireguard_public_key: wireguard_public_key
                 .ok_or_else(|| anyhow!("remote enroll state is missing WIREGUARD_PUBLIC_KEY"))?,
             host_public_key: match (publish_ssh, host_public_key) {

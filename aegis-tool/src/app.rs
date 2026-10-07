@@ -61,10 +61,10 @@ const AEGIS_DIR_ETC: &str = "/etc/ssh/aegis";
 const AEGIS_CLIENT_CA_PATH: &str = "/etc/ssh/aegis/client_ca.pub";
 const AEGIS_AUTHORIZED_PRINCIPALS_DIR: &str = aegis_dto::layout::AUTHORIZED_PRINCIPALS_DIRECTORY;
 const AEGIS_STATE_PATH: &str = "/etc/ssh/aegis/state.toml";
-const AEGIS_SSHD_DROPIN: &str = "/etc/ssh/sshd_config.d/90-aegis.conf";
+pub(crate) const AEGIS_SSHD_DROPIN: &str = "/etc/ssh/sshd_config.d/90-aegis.conf";
 const AEGIS_LOCKDOWN_DROPIN: &str = "/etc/ssh/sshd_config.d/95-aegis-lockdown.conf";
 const AEGIS_AGENT_DIR: &str = aegis_dto::layout::STATE_DIRECTORY;
-const SYSTEM_AEGIS_BIN: &str = aegis_dto::layout::SYSTEM_BINARY_PATH;
+const SYSTEM_AEGIS_BIN: &str = crate::platform::SYSTEM_BINARY_PATH;
 const REMOTE_HOST_KEY_PATH: &str = "/etc/ssh/ssh_host_ed25519_key";
 const REMOTE_HOST_CERT_PATH: &str = "/etc/ssh/ssh_host_ed25519_key-cert.pub";
 const WIREGUARD_DIR: &str = aegis_dto::layout::WIREGUARD_DIRECTORY;
@@ -74,9 +74,9 @@ const WIREGUARD_PRIVATE_KEY_PATH: &str = "/etc/aegis/wireguard/wg-aegis.key";
 const WIREGUARD_PUBLIC_KEY_PATH: &str = "/etc/aegis/wireguard/wg-aegis.pub";
 const WIREGUARD_UNIT_TEMPLATE_PATH: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_TEMPLATE_PATH;
 const WIREGUARD_UNIT_PREFIX: &str = aegis_dto::layout::WIREGUARD_SYSTEMD_UNIT_PREFIX;
+#[cfg(target_os = "linux")]
 const AEGIS_AGENT_UNIT_PATH: &str = aegis_dto::layout::AGENT_SYSTEMD_UNIT_PATH;
 pub(crate) const AEGIS_AGENT_SERVICE_NAME: &str = aegis_dto::layout::AGENT_SYSTEMD_SERVICE_NAME;
-const BIRD_CONFIG_PATH: &str = "/etc/bird/bird.conf";
 const BIRD_SERVICE_NAME: &str = "bird";
 const AEGIS_AGENT_REFRESH_TOKEN_ENV: &str = "AEGIS_AGENT_REFRESH_TOKEN_B64";
 const FLEET_REDEPLOY_REMOTE_INSTALL_TIMEOUT: Duration = Duration::from_secs(40 * 60);
@@ -443,7 +443,7 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
                 visibility: TaskVisibility::Immediate,
                 ..TaskOptions::default()
             })?;
-            workflow.set_phase("removing local SSH, WireGuard, BIRD, and agent integration");
+            workflow.set_phase("removing local SSH, mesh, and agent integration");
             let managed_state = match remove_local_aegis_management(
                 api_base_override,
                 args.api_token.as_deref(),
@@ -475,7 +475,7 @@ fn run_unenroll(api_base_override: Option<&str>, args: &UnenrollArgs) -> Result<
                 workflow.set_phase("notifying the reachable fleet of the topology change");
                 mesh_refresh::refresh_after_topology_change(api_base_override);
             }
-            workflow.finish("Aegis SSH, WireGuard, BIRD, and local agent integration removed");
+            workflow.finish("Aegis SSH, mesh, and local agent integration removed");
         }
         EnrollTarget::Remote(remote) => {
             let session = remote::BootstrapSession::open(
@@ -557,30 +557,62 @@ fn remove_local_aegis_management(
             }
         },
     };
-    system::Sshd::remove_dropin(Path::new(AEGIS_LOCKDOWN_DROPIN))?;
-    system::Sshd::remove_dropin(Path::new(aegis_dto::layout::DIRECT_SSHD_DROPIN_PATH))?;
+    #[cfg(target_os = "macos")]
+    let (native_runtime, mut native_removal) = {
+        use capulus::managed::{JobId, RedeployCoordinator, SystemUninstallation};
+        let product = std::sync::Arc::new(crate::managed::product()?);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        anyhow::ensure!(
+            RedeployCoordinator::new(std::sync::Arc::clone(&product))?
+                .active()?
+                .is_none(),
+            "a managed upgrade is still active; wait for it before unenrolling"
+        );
+        let mut removal =
+            runtime.block_on(SystemUninstallation::prepare(&product, JobId::random()))?;
+        runtime.block_on(removal.deactivate())?;
+        crate::agent::remove_native_resources().context(
+            "agent stopped; native ownership journals and installation journal retained for repair",
+        )?;
+        (runtime, removal)
+    };
+    #[cfg(target_os = "macos")]
+    crate::ssh_service::remove_certificate_integration()?;
     system::Sshd::remove_dropin(Path::new(AEGIS_SSHD_DROPIN))?;
-    system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).disable_now()?;
-    system::SystemdUnit::new(crate::managed::MANAGEMENT_SOCKET_NAME).disable_now()?;
-    system::SystemdUnit::new(AEGIS_AGENT_SERVICE_NAME).disable_now()?;
-    remove_local_egress_policy()?;
-    for interface in managed_wireguard_interfaces_in(Path::new(WIREGUARD_DIR))? {
-        system::SystemdUnit::new(format!("{WIREGUARD_UNIT_PREFIX}{interface}")).disable_now()?;
+    #[cfg(target_os = "linux")]
+    {
+        system::Sshd::remove_dropin(Path::new(AEGIS_LOCKDOWN_DROPIN))?;
+        system::Sshd::remove_dropin(Path::new(aegis_dto::layout::DIRECT_SSHD_DROPIN_PATH))?;
+        system::SystemdUnit::new(crate::managed::APPLICATION_SOCKET_NAME).disable_now()?;
+        system::SystemdUnit::new(crate::managed::MANAGEMENT_SOCKET_NAME).disable_now()?;
+        system::SystemdUnit::new(AEGIS_AGENT_SERVICE_NAME).disable_now()?;
+        remove_local_egress_policy()?;
+        for interface in managed_wireguard_interfaces_in(Path::new(WIREGUARD_DIR))? {
+            system::SystemdUnit::new(format!("{WIREGUARD_UNIT_PREFIX}{interface}"))
+                .disable_now()?;
+        }
+        crate::apparmor::remove_wireguard_access()?;
+        system::SystemdUnit::new(BIRD_SERVICE_NAME).disable_now()?;
+        system::TextFile::new(Path::new(AEGIS_AGENT_UNIT_PATH)).remove_if_exists()?;
+        system::TextFile::new(Path::new("/etc/systemd/system/aegis-agent.socket"))
+            .remove_if_exists()?;
+        system::TextFile::new(Path::new("/etc/systemd/system/aegis-capulus.socket"))
+            .remove_if_exists()?;
     }
-    crate::apparmor::remove_wireguard_access()?;
-    system::SystemdUnit::new(BIRD_SERVICE_NAME).disable_now()?;
-    system::TextFile::new(Path::new(AEGIS_AGENT_UNIT_PATH)).remove_if_exists()?;
-    system::TextFile::new(Path::new("/etc/systemd/system/aegis-agent.socket"))
-        .remove_if_exists()?;
-    system::TextFile::new(Path::new("/etc/systemd/system/aegis-capulus.socket"))
-        .remove_if_exists()?;
     system::TextFile::new(Path::new(AGENT_CONFIG_PATH)).remove_if_exists()?;
     system::TextFile::new(Path::new(SHARED_CACHE_PATH)).remove_if_exists()?;
     system::TextFile::new(Path::new(crate::config::AGENT_CONTEXT_PATH)).remove_if_exists()?;
-    system::TextFile::new(Path::new(BIRD_CONFIG_PATH)).remove_if_exists()?;
+    #[cfg(target_os = "linux")]
+    system::TextFile::new(Path::new(crate::platform::bird_config_path(
+        crate::platform::detect()?,
+    )?))
+    .remove_if_exists()?;
     system::TextFile::new(Path::new(WIREGUARD_CONFIG_PATH)).remove_if_exists()?;
     system::TextFile::new(Path::new(WIREGUARD_PRIVATE_KEY_PATH)).remove_if_exists()?;
     system::TextFile::new(Path::new(WIREGUARD_PUBLIC_KEY_PATH)).remove_if_exists()?;
+    #[cfg(target_os = "linux")]
     system::TextFile::new(Path::new(WIREGUARD_UNIT_TEMPLATE_PATH)).remove_if_exists()?;
     system::TextFile::new(Path::new(REMOTE_HOST_CERT_PATH)).remove_if_exists()?;
     if Path::new(AEGIS_DIR_ETC).exists() {
@@ -591,8 +623,11 @@ fn remove_local_aegis_management(
         fs::remove_dir_all(AEGIS_AGENT_DIR)
             .with_context(|| format!("failed to remove {AEGIS_AGENT_DIR}"))?;
     }
+    #[cfg(target_os = "linux")]
     system::Systemd::daemon_reload()?;
-    system::Sshd::reload()?;
+    if crate::ssh_service::active()? {
+        system::Sshd::reload()?;
+    }
     if let Some(state) = managed_state.as_ref() {
         remove_local_host_artifacts(&api_base, &state.host_id)?;
         system::TextFile::new(Path::new(AEGIS_STATE_PATH)).remove_if_exists()?;
@@ -600,13 +635,22 @@ fn remove_local_aegis_management(
         ui::warn("no aegis state was found; the host-specific client artifacts were not removed");
         system::TextFile::new(Path::new(AEGIS_STATE_PATH)).remove_if_exists()?;
     }
+    #[cfg(target_os = "linux")]
     system::TextFile::new(Path::new(SYSTEM_AEGIS_BIN)).remove_if_exists()?;
+    #[cfg(target_os = "macos")]
+    {
+        native_removal.remove_files().context(
+            "host configuration removed; managed installation journal retained for repair",
+        )?;
+        native_runtime.block_on(native_removal.finalize())?;
+    }
     if owns_management_group {
         crate::system_user::remove_management_group()?;
     }
     Ok(managed_state)
 }
 
+#[cfg(target_os = "linux")]
 fn remove_local_egress_policy() -> Result<()> {
     let script = Path::new(aegis_dto::layout::EGRESS_POLICY_SCRIPT_PATH);
     if script.exists() {
@@ -630,6 +674,7 @@ fn remove_local_egress_policy() -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn managed_wireguard_interfaces_in(directory: &Path) -> Result<Vec<String>> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -790,6 +835,7 @@ impl EnrollApi {
     ) -> Result<aegis_dto::protocol::AegisEnrollmentPrepareResponse> {
         self.client
             .prepare_enrollment(&aegis_dto::protocol::AegisEnrollmentPrepareRequest {
+                platform: identity.platform,
                 host_public_key: identity.host_public_key.clone(),
                 wireguard_public_key: identity.wireguard_public_key.clone(),
                 wireguard_endpoints,
@@ -909,6 +955,7 @@ fn run_enroll_invitation(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EnrollTargetIdentity {
+    platform: aegis_dto::platform::HostPlatform,
     wireguard_public_key: String,
     host_public_key: Option<String>,
 }
@@ -987,6 +1034,11 @@ fn run_enroll_with_target(
     let mut progress = EnrollmentProgress::new();
 
     let result = (|| -> Result<i32> {
+        let platform = match target {
+            EnrollTarget::Local(_) => crate::platform::detect()?,
+            EnrollTarget::Remote(_) => require_remote_session(remote_session)?.platform()?,
+        };
+        platform.require_role(enrollment.mode)?;
         api.heartbeat(aegis_dto::protocol::AegisEnrollmentPhase::PreparingMachine)?;
         let identity = prepare_enroll_target_identity(
             target,
@@ -1030,6 +1082,7 @@ fn run_enroll_with_target(
         }
 
         if let EnrollTarget::Local(_) = target
+            && platform.operating_system != aegis_dto::platform::OperatingSystem::MacOs
             && !hub_peers.is_empty()
         {
             workflow.set_phase("configuring local WireGuard peers");
@@ -1174,8 +1227,9 @@ fn load_enroll_target_identity(
     remote_session: Option<&dyn remote::RemoteBootstrapSession>,
     publish_ssh: bool,
 ) -> Result<EnrollTargetIdentity> {
-    let (wireguard_public_key, host_public_key) = match target {
+    let (platform, wireguard_public_key, host_public_key) = match target {
         EnrollTarget::Local(_) => (
+            crate::platform::detect()?,
             system::LocalRoot::read_file_trimmed(WIREGUARD_PUBLIC_KEY_PATH)
                 .context("failed to read the local durable WireGuard public key")?,
             publish_ssh
@@ -1187,7 +1241,11 @@ fn load_enroll_target_identity(
         ),
         EnrollTarget::Remote(_) => {
             let state = require_remote_session(remote_session)?.load_enroll_state(publish_ssh)?;
-            (state.wireguard_public_key, state.host_public_key)
+            (
+                state.platform,
+                state.wireguard_public_key,
+                state.host_public_key,
+            )
         }
     };
     let wireguard_public_key = normalize_wireguard_key(&wireguard_public_key)
@@ -1197,6 +1255,7 @@ fn load_enroll_target_identity(
             .with_context(|| format!("{} SSH host public key is invalid", target.label()))?;
     }
     Ok(EnrollTargetIdentity {
+        platform,
         wireguard_public_key,
         host_public_key: host_public_key.map(|key| key.trim().to_string()),
     })
@@ -1210,32 +1269,23 @@ fn prepare_enroll_target_identity(
 ) -> Result<EnrollTargetIdentity> {
     match target {
         EnrollTarget::Local(_) => {
-            workflow.set_phase("preparing local Ubuntu system packages");
-            system::LocalRoot::require_ubuntu()?;
-            system::LocalRoot::install_ubuntu_packages(&[
-                "openssh-server",
-                "wireguard",
-                "bird3",
-                "build-essential",
-                "pkg-config",
-                "libssl-dev",
-                "curl",
-                "ca-certificates",
-            ])?;
+            workflow.set_phase("preparing local system prerequisites");
+            system::LocalRoot::require_supported_platform()?;
+            system::LocalRoot::install_prerequisites()?;
             workflow.set_phase(if publish_ssh {
                 "ensuring local WireGuard and SSH identities"
             } else {
                 "ensuring the local WireGuard identity"
             });
-            system::LocalRoot::run_script(&system::WireGuardKeypairInstallScript::render())?;
-            if publish_ssh {
-                system::LocalRoot::run_script(&format!(
-                    "if ! test -f {REMOTE_HOST_KEY_PATH}; then\n  ssh-keygen -q -t ed25519 -N '' -f {REMOTE_HOST_KEY_PATH}\nfi\n"
-                ))?;
-            }
+            system::LocalRoot::run_script(&format!(
+                "{}\n{}\n\"$system_aegis\" agent prepare-identity {}\n",
+                enroll_install::system_program_bootstrap_script(false),
+                crate::platform::BINARY_SHELL_ASSIGNMENT,
+                if publish_ssh { "--inbound-ssh" } else { "" }
+            ))?;
         }
         EnrollTarget::Remote(_) => {
-            workflow.set_phase("preparing remote Ubuntu system packages and identity");
+            workflow.set_phase("preparing remote system prerequisites and identity");
             let session = require_remote_session(remote_session)?;
             ui::suspend(|| {
                 session.run_shell_streaming_with_tty(
@@ -1282,10 +1332,12 @@ fn finish_activated_enrollment(
 ) -> Result<()> {
     match &plan.target {
         EnrollTarget::Local(_) => {
-            ui::warn(
-                "SSH lockdown remains disabled during enrollment; enable it explicitly after certificate-backed SSH has been verified.",
-            );
-            lockdown::apply_local_disable()?;
+            if crate::platform::detect()?.supports(aegis_dto::platform::Capability::SshLockdown) {
+                ui::warn(
+                    "SSH lockdown remains disabled during enrollment; enable it after certificate-backed SSH is verified.",
+                );
+                lockdown::apply_local_disable()?;
+            }
             workflow.set_phase("verifying local agent reconciliation and cache persistence");
             let refresh = local_agent::refresh_host_cache()?;
             if let Some(warning) = refresh.warning {
@@ -1306,15 +1358,18 @@ fn finish_activated_enrollment(
             let session = require_remote_session(remote_session).context(
                 "remote enrollment finalization requires the original bootstrap SSH path",
             )?;
-            ui::warn(
-                "SSH lockdown remains disabled during enrollment; enable it explicitly after certificate-backed SSH has been verified.",
-            );
-            lockdown::disable_remote(session, workflow)?;
+            let platform = session.platform()?;
+            if platform.supports(aegis_dto::platform::Capability::SshLockdown) {
+                ui::warn(
+                    "SSH lockdown remains disabled during enrollment; enable it after certificate-backed SSH is verified.",
+                );
+                lockdown::disable_remote(session, workflow)?;
+            }
             workflow.set_phase("verifying remote agent reconciliation");
             ui::suspend(|| {
                 session.run_shell_streaming_with_tty(&format!(
                     "{} advanced reconcile",
-                    sh_quote(SYSTEM_AEGIS_BIN)
+                    sh_quote(crate::platform::system_binary_path(platform))
                 ))
             })?;
         }
@@ -1351,7 +1406,7 @@ fn recover_activated_enrollment(
             let token = install::agent_refresh_token_env_assignment(api.refresh_token())?;
             let script = format!(
                 "sudo env {token} {binary} --api-base {api_base} advanced install --reinstall --user {user}\n",
-                binary = sh_quote(SYSTEM_AEGIS_BIN),
+                binary = sh_quote(crate::platform::system_binary_path(session.platform()?)),
                 api_base = sh_quote(api_base),
                 user = sh_quote(&remote.login_principal),
             );
@@ -1414,10 +1469,10 @@ fn known_hosts_target(host: &str, port: u16) -> String {
 }
 
 pub fn check_local_enrollment_platform() -> Result<()> {
-    system::LocalRoot::require_ubuntu()?;
+    system::LocalRoot::require_supported_platform()?;
     anyhow::ensure!(
-        Path::new("/run/systemd/system").is_dir(),
-        "local enrollment requires Ubuntu running systemd; use --no-enroll on an operator-only computer"
+        cfg!(target_os = "macos") || Path::new("/run/systemd/system").is_dir(),
+        "Linux enrollment requires systemd; use --no-enroll on an operator-only computer"
     );
     Ok(())
 }
@@ -1569,6 +1624,10 @@ mod tests {
             host_id: host_id("alpha"),
             aliases: aliases("alpha"),
             host: aegis_dto::protocol::AegisNetworkHost {
+                platform: aegis_dto::platform::HostPlatform {
+                    operating_system: aegis_dto::platform::OperatingSystem::Ubuntu,
+                    architecture: aegis_dto::platform::Architecture::X86_64,
+                },
                 mode: AegisHostMode::Leaf,
                 ssh: Some(AegisNetworkHostSsh {
                     port: Some(22),
@@ -1832,7 +1891,15 @@ mod tests {
         let command = prepared.command();
         let command_args = command_args(command);
 
+        #[cfg(target_os = "linux")]
         assert_eq!("rsync", command.get_program().to_string_lossy());
+        #[cfg(target_os = "macos")]
+        assert!(
+            command
+                .get_program()
+                .to_string_lossy()
+                .ends_with("/bin/rsync")
+        );
         assert!(command_args.contains(&"--archive".to_string()));
         assert!(command_args.contains(&"--checksum".to_string()));
         assert!(command_args.contains(&"--compress".to_string()));
@@ -2114,20 +2181,23 @@ mod tests {
     }
 
     #[test]
-    fn remote_prepare_host_script_keeps_wireguard_public_key_readable() {
+    fn remote_preparation_bootstraps_before_creating_identity() {
         let script = enroll_install::RemotePrepareHostScript::render(true);
 
         assert!(script.contains(
             "retry sudo apt-get -o Acquire::Retries=5 -o Acquire::Languages=none update"
         ));
         assert!(script.contains("retry sudo env DEBIAN_FRONTEND=noninteractive apt-get install"));
-        assert!(script.contains("install -d -m 755 /etc/aegis/wireguard"));
-        assert!(script.contains("/etc/aegis/wireguard/wg-aegis.key"));
-        assert!(script.contains("chmod 644 /etc/aegis/wireguard/wg-aegis.pub"));
-        assert!(script.contains("ssh-keygen -q -t ed25519"));
-
+        assert!(
+            script.find("install --locked --force").unwrap()
+                < script.find("agent prepare-identity").unwrap()
+        );
+        assert!(script.contains("agent prepare-identity --inbound-ssh"));
+        assert!(script.contains("system_aegis=/Library/PrivilegedHelperTools/aegis"));
+        assert_bash_syntax(&script);
         let no_ssh_script = enroll_install::RemotePrepareHostScript::render(false);
-        assert!(!no_ssh_script.contains("ssh-keygen"));
+        assert!(no_ssh_script.contains("agent prepare-identity"));
+        assert!(!no_ssh_script.contains("--inbound-ssh"));
     }
 
     #[test]

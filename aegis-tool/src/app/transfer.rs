@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use capulus::shell::shell_quote as sh_quote;
 
 use crate::api::AuthenticatedApiClient;
@@ -136,6 +136,22 @@ fn prepare_transfer(
         task.set_phase("Checking the remote destination");
         fail_if_remote_destination_exists(&prepared, destination)?;
     }
+    task.set_phase("Checking transfer tools");
+    validate_rsync(
+        &run_capture(Command::new(rsync_program(crate::platform::detect()?)).arg("--version"))
+            .context("rsync is missing; install rsync 3.2 or newer (macOS: brew install rsync)")?,
+        "local machine",
+    )?;
+    let remote_program = rsync_program(prepared.host().platform);
+    validate_rsync(
+        &run_capture(&mut prepared.ssh_command(
+            &[],
+            Some(&format!("{} --version", sh_quote(remote_program))),
+            None,
+            false,
+        ))?,
+        &prepared.destination_label(),
+    )?;
     task.set_phase("Building the rsync handoff");
     PreparedTransfer::new(
         prepared,
@@ -245,8 +261,12 @@ fn build_rsync_command(
         bail!("transfer requires at least one source path");
     }
 
-    let mut command = Command::new("rsync");
+    let mut command = Command::new(rsync_program(crate::platform::detect()?));
     command.args(default_rsync_args(args, show_progress));
+    command.arg(format!(
+        "--rsync-path={}",
+        sh_quote(rsync_program(prepared.host().platform))
+    ));
     command.arg("-e");
     command.arg(strict_ssh_remote_shell(prepared, &[]));
 
@@ -321,4 +341,28 @@ fn rsync_remote_host(host: &str) -> String {
     } else {
         host.to_string()
     }
+}
+
+fn rsync_program(platform: aegis_dto::platform::HostPlatform) -> &'static str {
+    use aegis_dto::platform::{Architecture, OperatingSystem};
+    match (platform.operating_system, platform.architecture) {
+        (OperatingSystem::MacOs, Architecture::X86_64) => "/usr/local/bin/rsync",
+        (OperatingSystem::MacOs, Architecture::Aarch64) => "/opt/homebrew/bin/rsync",
+        _ => "rsync",
+    }
+}
+
+fn validate_rsync(output: &crate::command::CommandOutput, location: &str) -> Result<()> {
+    let version = output
+        .stdout
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(2))
+        .and_then(|value| semver::Version::parse(value).ok());
+    ensure!(
+        output.status.success()
+            && version.is_some_and(|version| version >= semver::Version::new(3, 2, 0)),
+        "{location} needs rsync 3.2 or newer; install the rsync package (macOS: brew install rsync)"
+    );
+    Ok(())
 }

@@ -1,53 +1,13 @@
 use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
-use std::process::Command;
 
-use aegis_dto::{
-    HostId, normalize_wireguard_ipv4, normalize_wireguard_ipv6, normalize_wireguard_key,
-};
+use aegis_dto::{HostId, normalize_wireguard_ipv4, normalize_wireguard_ipv6};
 use anyhow::{Context, Result, bail};
 
-use crate::command::{require_success, require_success_with_input};
+use super::WIREGUARD_CONFIG_PATH;
 
-use super::{WIREGUARD_CONFIG_PATH, line_with_newline};
-
-#[derive(Debug, Clone)]
-pub(super) struct Keypair {
-    pub(super) private_key: String,
-    pub(super) public_key: String,
-}
-
-impl Keypair {
-    pub(super) fn generate() -> Result<Self> {
-        Self::from_private_key(
-            &require_success(
-                "generate WireGuard private key",
-                Command::new("wg").arg("genkey"),
-            )?
-            .stdout,
-        )
-        .context("generated WireGuard keypair is invalid")
-    }
-
-    pub(super) fn from_private_key(private_key: &str) -> Result<Self> {
-        let private_key =
-            normalize_wireguard_key(private_key).context("WireGuard private key is invalid")?;
-        let public_key = normalize_wireguard_key(
-            &require_success_with_input(
-                "derive WireGuard public key",
-                Command::new("wg").arg("pubkey"),
-                line_with_newline(&private_key).as_bytes(),
-            )?
-            .stdout,
-        )
-        .context("derived WireGuard public key is invalid")?;
-        Ok(Self {
-            private_key,
-            public_key,
-        })
-    }
-}
+pub(super) use crate::wireguard_keys::Keypair;
 
 #[derive(Debug, Clone)]
 pub(super) struct HubPeer {

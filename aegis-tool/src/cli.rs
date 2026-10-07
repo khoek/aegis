@@ -1092,6 +1092,17 @@ pub struct AgentNamespaceArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AgentCommands {
+    #[command(hide = true)]
+    PrepareIdentity {
+        #[arg(long)]
+        inbound_ssh: bool,
+    },
+    #[cfg(target_os = "macos")]
+    #[command(hide = true)]
+    WireguardWorker {
+        #[arg(long)]
+        interface: String,
+    },
     Serve(AgentArgs),
 
     #[command(hide = true)]

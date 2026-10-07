@@ -408,10 +408,10 @@ mod tests {
         .unwrap();
         assert_eq!(output.stdout.as_bytes(), input);
         let output = bounded(Duration::from_secs(2), || {
-            run_command(Command::new("readlink").arg("/dev/stdin"), None)
+            run_command(Command::new("sh").args(["-c", "test -p /dev/stdin"]), None)
         })
         .unwrap();
-        assert_eq!(output.stdout.trim(), "/proc/self/fd/0");
+        assert!(output.status.success(), "command stdin must remain a pipe");
         let started = Instant::now();
         assert!(
             bounded(Duration::from_millis(80), || run_command(

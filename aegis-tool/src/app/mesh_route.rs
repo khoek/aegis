@@ -109,6 +109,7 @@ fn set_status(status: Option<&dyn ConnectStatus>, message: &str) {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn exact_route_exists(target: IpAddr) -> Result<bool> {
     let mut command = Command::new("ip");
     if target.is_ipv6() {
@@ -135,6 +136,7 @@ fn exact_route_exists(target: IpAddr) -> Result<bool> {
     Ok(!routes.is_empty())
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn host_prefix(target: IpAddr) -> String {
     match target {
         IpAddr::V4(_) => format!("{target}/32"),
@@ -142,11 +144,73 @@ fn host_prefix(target: IpAddr) -> String {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn exact_route_exists(target: IpAddr) -> Result<bool> {
+    let output = run_capture(Command::new("/sbin/route").args([
+        "-n",
+        "get",
+        if target.is_ipv4() { "-inet" } else { "-inet6" },
+        &target.to_string(),
+    ]))
+    .context("failed to inspect native mesh route")?;
+    if !output.status.success() {
+        if output.stderr.contains("not in table") {
+            return Ok(false);
+        }
+        bail!("native mesh route query failed: {}", output.stderr.trim());
+    }
+    Ok(native_exact_route(&output.stdout, target))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn native_exact_route(output: &str, target: IpAddr) -> bool {
+    let fields = output
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .map(|(key, value)| (key.trim(), value.trim()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    fields
+        .get("destination")
+        .and_then(|value| value.parse::<IpAddr>().ok())
+        == Some(target)
+        && fields.get("flags").is_some_and(|value| {
+            value
+                .trim_matches(['<', '>'])
+                .split(',')
+                .any(|flag| flag == "HOST")
+        })
+        && fields.get("interface").is_some_and(|value| {
+            *value == "lo0"
+                || value.strip_prefix("feth").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                })
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use super::host_prefix;
+
+    #[test]
+    fn native_route_query_rejects_default_routes_and_unrelated_interfaces() {
+        let target = "fd75::7".parse().unwrap();
+        let route = "destination: fd75::7\nflags: <UP,GATEWAY,HOST,DONE>\ninterface: feth8\n";
+        assert!(super::native_exact_route(route, target));
+        assert!(!super::native_exact_route(
+            &route.replace("fd75::7", "default"),
+            target
+        ));
+        assert!(!super::native_exact_route(
+            &route.replace("feth8", "en0"),
+            target
+        ));
+        assert!(!super::native_exact_route(
+            &route.replace("HOST,", ""),
+            target
+        ));
+    }
 
     #[test]
     fn exact_route_queries_use_host_prefixes() {
