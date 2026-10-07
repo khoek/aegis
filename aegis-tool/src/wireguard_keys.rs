@@ -16,7 +16,7 @@ impl Keypair {
     }
 
     pub fn from_private_key(value: &str) -> Result<Self> {
-        let private_key = aegis_dto::normalize_wireguard_key(value)?;
+        let private_key = normalize_private_key(value)?;
         let bytes: [u8; 32] = STANDARD
             .decode(&private_key)?
             .try_into()
@@ -66,6 +66,22 @@ impl Keypair {
     }
 }
 
+pub(crate) fn normalize_private_key(value: &str) -> Result<String> {
+    let mut bytes: [u8; 32] = STANDARD
+        .decode(value.trim())?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("WireGuard key must contain 32 bytes"))?;
+    // WireGuard stores the RFC 7748 scalar, not the original random bytes.
+    bytes[0] &= 248;
+    bytes[31] &= 127;
+    bytes[31] |= 64;
+    Ok(STANDARD.encode(bytes))
+}
+
+pub(crate) fn canonical_private_key_for_comparison(value: &str) -> String {
+    normalize_private_key(value).unwrap_or_else(|_| value.trim().to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +120,33 @@ mod tests {
         fs::write(&public, "wrong").unwrap();
         assert!(Keypair::ensure(&private, &public).is_err());
         assert_eq!(fs::read_to_string(private).unwrap(), key.private_key);
+    }
+
+    #[test]
+    fn wireguard_scalar_encoding_preserves_identity_without_rewriting_stored_keys() {
+        let raw = STANDARD.encode([255u8; 32]);
+        let key = Keypair::from_private_key(&raw).unwrap();
+        let bytes = STANDARD.decode(&key.private_key).unwrap();
+        assert_eq!(bytes[0], 248);
+        assert_eq!(bytes[31], 127);
+        assert_eq!(
+            key.public_key,
+            STANDARD.encode(PublicKey::from(&StaticSecret::from([255u8; 32])).to_bytes())
+        );
+        assert_eq!(
+            Keypair::from_private_key(&key.private_key)
+                .unwrap()
+                .private_key,
+            key.private_key
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let private = dir.path().join("private");
+        let public = dir.path().join("public");
+        fs::write(&private, &raw).unwrap();
+        assert_eq!(
+            Keypair::ensure(&private, &public).unwrap().private_key,
+            key.private_key
+        );
+        assert_eq!(fs::read_to_string(private).unwrap(), raw);
     }
 }

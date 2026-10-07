@@ -383,6 +383,14 @@ impl WireGuardRuntimeConfig {
 
     fn matches(&self, live: &Self) -> Result<bool> {
         let mut desired = self.clone();
+        let mut live = live.clone();
+        for fields in [&mut desired.interface, &mut live.interface] {
+            if let Some(values) = fields.get_mut("privatekey") {
+                for value in values {
+                    *value = crate::wireguard_keys::canonical_private_key_for_comparison(value);
+                }
+            }
+        }
         if self.listen_port_policy()? == WireGuardListenPort::Automatic {
             let Some(port) = NonZeroU16::new(live.listen_port()?) else {
                 return Ok(false);
@@ -7144,9 +7152,9 @@ fn line_with_newline(value: &str) -> String {
 }
 
 fn load_private_key(path: &Path) -> Result<String> {
-    fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))
-        .map(|value| value.trim().to_string())
+    let value =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(crate::wireguard_keys::Keypair::from_private_key(&value)?.private_key)
 }
 
 fn ensure_wireguard_keypair(config: &WireGuardConfig) -> Result<()> {
@@ -8130,6 +8138,16 @@ AllowedIPs = 10.75.1.1/32
                 WireGuardRuntime::parse("test", &format!("{config}FwMark = {value}\n")).is_err()
             );
         }
+    }
+
+    #[test]
+    fn wireguard_runtime_normalizes_clamped_private_keys() {
+        let desired = "[Interface]\nPrivateKey = cdt8IXi7m5Z9YllMYSdjjk3RBA5XiTyLzV7JTkEsBHg=\nListenPort = 51820\n";
+        let live = desired.replace(
+            "cdt8IXi7m5Z9YllMYSdjjk3RBA5XiTyLzV7JTkEsBHg=",
+            "cNt8IXi7m5Z9YllMYSdjjk3RBA5XiTyLzV7JTkEsBHg=",
+        );
+        assert!(wireguard_runtime_configs_match(desired, &live).unwrap());
     }
 
     #[test]
