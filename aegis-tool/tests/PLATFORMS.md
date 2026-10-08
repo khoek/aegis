@@ -2,7 +2,21 @@
 
 Use a disposable fleet with two Linux hubs, one Linux leaf, and the Intel Mac.
 Keep a local console open. Record exact release versions, Mac model/OS, Arch
-package versions, and results in `PLAN.md`. Cross-compilation is not acceptance.
+package versions, and results here. Cross-compilation is not acceptance.
+
+## Validation status
+
+- Arch acceptance passed on GCE on 2026-10-07 with `aegis-tool` 0.4.6:
+  installation, enrollment, reboot, dual-stack mesh traffic, SSH, file transfers,
+  hub failover, managed redeploy, removal, and the isolated Linux kernel suite.
+- Production validation passed on 2026-10-08 with `aegis-tool` 0.4.13 on all
+  nine participating hosts: matching CLI/agent versions, healthy reconciliation,
+  stable IPv4/IPv6 connectivity, and authenticated SSH. The temporary bridge was
+  removed and yanked. Four offline hosts remain deferred for manual repair.
+- Native macOS acceptance remains pending. Intel workspace and Apple Silicon
+  CLI/agent compilation passed; the checks below still require a real Mac.
+  The first target is a newer Intel Mac. Record its exact model and OS, and the
+  oldest macOS version actually verified, before claiming runtime support.
 
 ## Installation and authorization
 
