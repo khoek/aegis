@@ -20,7 +20,10 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, tomllib
-          version = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
+          api_version = tomllib.load(open("aegis-api/Cargo.toml", "rb"))["package"]["version"]
+          admin_version = tomllib.load(open("aegis-admin-tool/Cargo.toml", "rb"))["package"]["version"]
+          assert api_version == admin_version, "API and admin package versions differ"
+          version = api_version
           if os.environ["GITHUB_REF_TYPE"] == "tag":
               assert os.environ["GITHUB_REF_NAME"] == f"v{version}", "Tag differs from Cargo version"
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:

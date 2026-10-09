@@ -14,9 +14,10 @@ cargo test --workspace --locked
 ```
 
 The lockfile preparation runs in a clean temporary checkout with an isolated Cargo
-home. Review and commit its result, then tag the shared workspace version.
-Publish `aegis-dto`, `aegis-api`, `aegis-tool`, then `aegis-admin-tool`, using
-`cargo publish --locked -p PACKAGE`. Wait for each dependency to appear in the
+home. Review and commit its result, then publish `aegis-dto`, `aegis-api`,
+`aegis-tool`, and `aegis-admin-tool` using `cargo publish --locked -p PACKAGE`.
+The API and admin package versions must match because setup resolves the API image
+for the installed admin release. Wait for each dependency to appear in the
 crates.io index before publishing its consumers.
 
 Install `aegis-tool` and `aegis-admin-tool` independently to verify their package
@@ -24,7 +25,8 @@ boundaries. The client must build without Firestore, GCP identity, or
 certificate-authority generation dependencies. Neither package needs feature flags.
 
 The `API image` workflow builds `aegis-api/Dockerfile` on version tags or manual
-dispatch and publishes `ghcr.io/khoek/aegis-api:vVERSION`. Make the GHCR package
+dispatch and publishes `ghcr.io/khoek/aegis-api:vVERSION`, where `VERSION` is
+read from `aegis-api/Cargo.toml` and checked against `aegis-admin-tool`. Make the GHCR package
 publicly readable on its first publication. Record the workflow's digest with the
 release. Setup resolves that tag once and deploys its immutable digest; operators
 can supply another pinned image with `--image`.
