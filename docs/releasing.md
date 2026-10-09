@@ -14,7 +14,8 @@ cargo test --workspace --locked
 ```
 
 The lockfile preparation runs in a clean temporary checkout with an isolated Cargo
-home. Review and commit its result, then publish `aegis-dto`, `aegis-api`,
+home. Review and commit its result, then push a `vVERSION` tag matching the API
+and admin package versions. Publish `aegis-dto`, `aegis-api`,
 `aegis-tool`, and `aegis-admin-tool` using `cargo publish --locked -p PACKAGE`.
 The API and admin package versions must match because setup resolves the API image
 for the installed admin release. Wait for each dependency to appear in the
