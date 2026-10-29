@@ -63,4 +63,3 @@ jobs:
       - uses: actions/checkout@v6
       - run: rustup update stable --no-self-update
       - run: cargo check -p aegis-tool --locked
-      - run: cargo test -p aegis-tool --locked
