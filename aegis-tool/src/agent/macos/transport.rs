@@ -149,7 +149,8 @@ where
         unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } == 0,
         "protect routing-notification descriptor"
     );
-    let descriptor = AsyncFd::new(descriptor)?;
+    // SAFETY: `OwnedFd` keeps the descriptor open and stable for the AsyncFd lifetime.
+    let descriptor = unsafe { AsyncFd::register(descriptor) }?;
     let mut buffer = [0u8; 8192];
     eprintln!("aegis-agent is watching native link and route changes");
     loop {

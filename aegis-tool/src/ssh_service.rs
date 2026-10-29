@@ -234,11 +234,8 @@ pub(crate) fn remove_certificate_integration() -> Result<()> {
         return Err(error.context("SSH include removal rejected; previous sshd_config restored"));
     }
     match fs::remove_file(crate::app::AEGIS_SSHD_DROPIN) {
-        Ok(())
-        | Err(std::io::Error {
-            kind: ErrorKind::NotFound,
-            ..
-        }) => {}
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
     Ok(())
