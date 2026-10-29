@@ -258,6 +258,8 @@ fn setup_resume(proxy_invoker: Option<&str>, oauth_enabled: bool) {
                 "setup",
                 "--project",
                 &project,
+                "--region",
+                "us-central1",
                 "--yes",
                 "--no-enroll",
             ]);
@@ -268,8 +270,6 @@ fn setup_resume(proxy_invoker: Option<&str>, oauth_enabled: bool) {
         }
         if attempt == 0 {
             command.args([
-                "--region",
-                "us-central1",
                 "--endpoint",
                 "https://fleet.example/custom",
                 "--image",
