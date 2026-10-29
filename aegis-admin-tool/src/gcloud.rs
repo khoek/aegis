@@ -161,16 +161,6 @@ impl Gcloud {
         );
         Ok(())
     }
-
-    pub fn active_project() -> Result<Option<String>> {
-        let output = execute(
-            Command::new("gcloud").args(["config", "get", "project", "--quiet"]),
-            None,
-            Duration::from_secs(30),
-        )?;
-        let value = output.trim();
-        Ok((!value.is_empty() && value != "(unset)").then(|| value.to_owned()))
-    }
 }
 
 fn decode(output: &str) -> Result<Value> {

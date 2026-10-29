@@ -259,15 +259,18 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
     let cloud = super::prerequisites::prepare(args.project.clone(), !args.yes)?;
     let project = cloud.project.clone();
     let _lock = aegis_tool::client::deployment_lock(&project)?;
+    let region = match args.region.clone() {
+        Some(region) => region,
+        None => select_region(!args.yes)?,
+    };
+    ensure!(valid_region(&region), "invalid GCP region");
     super::prerequisites::check_project(&cloud, !args.yes)?;
     let path = receipt_path(&project)?;
     let mut client_secret = None;
     let mut deployment = if path.exists() {
         let deployment = Deployment::load(Some(project.clone()))?;
         ensure!(
-            args.region
-                .as_ref()
-                .is_none_or(|value| value == &deployment.config.region)
+            region == deployment.config.region
                 && args
                     .endpoint
                     .as_ref()
@@ -294,8 +297,6 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
         let cloud = Gcloud::new(project.clone())?;
         let description = cloud.ready_json(&["projects", "describe", &project])?;
         let number = text(&description, "projectNumber")?;
-        let region = args.region.clone().unwrap_or_else(suggest_region);
-        ensure!(valid_region(&region), "invalid GCP region");
         let backend = format!("https://{SERVICE}-{number}.{region}.run.app");
         let endpoint = match &args.endpoint {
             Some(value) => value.trim_end_matches('/').to_owned(),
@@ -1024,11 +1025,7 @@ fn runtime_access_pending(error: &anyhow::Error) -> bool {
         .iter().any(|code| error.to_string().contains(code))
 }
 
-pub(super) fn project(value: Option<String>) -> Result<String> {
-    let value = match value {
-        Some(value) => Some(value),
-        None => Gcloud::active_project()?,
-    };
+pub(crate) fn project(value: Option<String>) -> Result<String> {
     let value = match value {
         Some(value) => value,
         None => prompt("GCP project ID", None)?,
@@ -1052,6 +1049,29 @@ fn prompt(label: &str, default: Option<&str>) -> Result<String> {
             input = input.default(default.into()).allow_empty(true);
         }
         input.interact_text().map_err(Into::into)
+    })
+}
+fn select_region(interactive: bool) -> Result<String> {
+    ensure!(
+        interactive,
+        "Specify --region REGION when using --yes, then rerun setup"
+    );
+    ui::require_interactive(
+        "Choose a GCP region with --region REGION, or rerun setup in an interactive terminal",
+    )?;
+    ui::suspend(|| {
+        dialoguer::Input::<String>::new()
+            .with_prompt("GCP region")
+            .validate_with(|value: &String| {
+                if valid_region(value.trim()) {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("invalid GCP region"))
+                }
+            })
+            .interact_text()
+            .map(|value| value.trim().to_owned())
+            .map_err(Into::into)
     })
 }
 fn read_oauth_client(
@@ -1091,40 +1111,6 @@ fn read_oauth_client(
                 ui::format_duration(started.elapsed())
             )),
         }
-    }
-}
-fn suggest_region() -> String {
-    let zone = std::env::var("TZ")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            fs::read_link("/etc/localtime").ok().and_then(|p| {
-                p.to_str()
-                    .and_then(|s| s.split("zoneinfo/").nth(1))
-                    .map(str::to_owned)
-            })
-        })
-        .or_else(|| fs::read_to_string("/etc/timezone").ok())
-        .unwrap_or_default();
-    region_for_timezone(zone.trim()).into()
-}
-fn region_for_timezone(zone: &str) -> &'static str {
-    match zone {
-        "Australia/Perth" => "australia-southeast1",
-        z if z.starts_with("Australia/") || z.starts_with("Pacific/Auckland") => {
-            "australia-southeast1"
-        }
-        "Asia/Tokyo" => "asia-northeast1",
-        "Asia/Seoul" => "asia-northeast3",
-        "Asia/Kolkata" | "Asia/Calcutta" => "asia-south1",
-        z if z.starts_with("Asia/") => "asia-southeast1",
-        "Europe/London" => "europe-west2",
-        z if z.starts_with("Europe/") => "europe-west1",
-        z if z.starts_with("Africa/") => "africa-south1",
-        "America/Sao_Paulo" | "America/Argentina/Buenos_Aires" => "southamerica-east1",
-        "America/Los_Angeles" | "America/Vancouver" => "us-west1",
-        "America/New_York" | "America/Toronto" => "us-east1",
-        _ => "us-central1",
     }
 }
 pub(super) fn valid_region(value: &str) -> bool {
@@ -1233,7 +1219,7 @@ mod tests {
     }
 
     #[test]
-    fn image_pins_and_region_suggestions() {
+    fn image_pins_and_region_validation() {
         assert!(validate_image("ghcr.io/khoek/aegis-api:latest").is_err());
         assert!(
             validate_image(&format!(
@@ -1242,11 +1228,6 @@ mod tests {
             ))
             .is_ok()
         );
-        assert_eq!(
-            region_for_timezone("Australia/Sydney"),
-            "australia-southeast1"
-        );
-        assert_eq!(region_for_timezone("Europe/London"), "europe-west2");
         assert!(!valid_region("--quiet"));
     }
 }

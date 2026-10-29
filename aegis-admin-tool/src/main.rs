@@ -116,7 +116,7 @@ enum AdminCommand {
 
 #[derive(Debug, Args)]
 struct ProjectArgs {
-    /// Defaults to the active gcloud project.
+    /// Prompt for the GCP project when omitted.
     #[arg(long)]
     project: Option<String>,
 }

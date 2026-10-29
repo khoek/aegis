@@ -18,8 +18,8 @@ operator needs permission to provision Cloud Run, Firestore, IAM, Compute Engine
 and IAP; setup identifies the selected account and links to project access settings
 if management API activation is denied.
 
-Run `aegis-admin setup`. It proposes a region from your timezone, asks once about
-a custom public endpoint, and shows the resource plan. It selects and pins the
+Run `aegis-admin setup`. It asks you to choose the GCP project and region, asks
+once about a custom public endpoint, and shows the resource plan. It selects and pins the
 official API image automatically. Setup provisions the API,
 identity and certificate authorities, a namespace, and Ubuntu hub VMs in the regions you select. It
 issues your user credential through local GCP access, signs you in, enrolls the

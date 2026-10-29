@@ -17,9 +17,7 @@ impl Connection {
     pub fn load(project: Option<String>) -> Result<Self> {
         let project = match project {
             Some(project) => project,
-            None => {
-                Gcloud::active_project()?.context("Select a gcloud project or pass --project")?
-            }
+            None => super::deployment::project(None)?,
         };
         let path = path(&project)?;
         let connection: Self = serde_json::from_slice(&fs::read(&path).with_context(|| format!(
@@ -89,9 +87,7 @@ impl Connection {
     ) -> Result<()> {
         let project = match project {
             Some(project) => project,
-            None => {
-                Gcloud::active_project()?.context("Select a gcloud project or pass --project")?
-            }
+            None => super::deployment::project(None)?,
         };
         let options = store::AdminOptions {
             project_id: project.clone(),

@@ -152,10 +152,42 @@ fn missing_project_explains_selection_without_enabling_apis() {
 }
 
 #[test]
+fn active_gcloud_project_is_ignored_without_an_explicit_project() {
+    let fixture = Fixture::new(json!({"active_project": "aegis-fresh-test"}));
+    let output = fixture.run(&["--yes", "--region", "us-central1"]);
+    assert!(!output.status.success());
+    assert!(
+        output.stderr.contains("--project PROJECT_ID"),
+        "{}",
+        output.stderr
+    );
+    assert!(fixture.calls().iter().all(|call| call[0] != "config"));
+    assert!(fixture.calls().iter().all(|call| call[0] != "services"));
+}
+
+#[test]
+fn missing_region_is_rejected_before_enabling_apis() {
+    let fixture = Fixture::new(json!({}));
+    let output = fixture.run(&["--yes", "--project", "aegis-fresh-test"]);
+    assert!(!output.status.success());
+    assert!(
+        output.stderr.contains("--region REGION"),
+        "{}",
+        output.stderr
+    );
+    assert!(fixture.calls().iter().all(|call| call[0] != "services"));
+}
+
+#[test]
 fn missing_billing_explains_activation_and_retained_state() {
-    let fixture =
-        Fixture::new(json!({"billing_enabled": false, "active_project": "aegis-fresh-test"}));
-    let output = fixture.run(&["--yes"]);
+    let fixture = Fixture::new(json!({"billing_enabled": false}));
+    let output = fixture.run(&[
+        "--yes",
+        "--project",
+        "aegis-fresh-test",
+        "--region",
+        "us-central1",
+    ]);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     assert!(
@@ -167,7 +199,7 @@ fn missing_billing_explains_activation_and_retained_state() {
     );
     assert!(output.stderr.contains("GCP management APIs remain enabled"));
     assert!(fixture.calls().iter().all(|call| {
-        ["version", "auth", "config", "services", "billing"].contains(&call[0].as_str().unwrap())
+        ["version", "auth", "services", "billing"].contains(&call[0].as_str().unwrap())
     }));
     assert!(
         !fixture
@@ -206,20 +238,13 @@ fn interactive_prerequisites_resume_after_external_repairs() {
             output.stderr
         );
         assert!(fixture.calls().iter().all(|call| {
-            [
-                "version", "auth", "config", "projects", "services", "billing",
-            ]
-            .contains(&call[0].as_str().unwrap())
+            ["version", "auth", "projects", "services", "billing"]
+                .contains(&call[0].as_str().unwrap())
         }));
         if scenario == "interrupt" {
             assert!(!fixture.calls().iter().any(|call| call[0] == "services"));
         } else {
-            assert!(
-                fixture
-                    .calls()
-                    .iter()
-                    .any(|call| call[0] == "config" && call[1] == "set")
-            );
+            assert!(!fixture.calls().iter().any(|call| call[0] == "config"));
         }
     }
 }

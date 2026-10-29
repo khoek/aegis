@@ -65,6 +65,8 @@ try:
             expect("https://console.cloud.google.com/projectcreate")
             expect("GCP project ID")
             os.write(terminal, b"aegis-new-test\r")
+        expect("GCP region")
+        os.write(terminal, b"australia-southeast1\r")
         expect("billing/linkedaccount?project=")
         expect("Waiting for Project billing")
         if scenario == "interrupt-billing":

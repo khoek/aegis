@@ -46,16 +46,7 @@ pub(super) fn prepare(project: Option<String>, interactive: bool) -> Result<Gclo
     )?;
     let project = match project {
         Some(project) => project,
-        None => match Gcloud::active_project()? {
-            Some(project) => project,
-            None => {
-                let project = select_project(&account, interactive)?;
-                Gcloud::new(project.clone())?;
-                Gcloud::global_json(&["config", "set", "project", &project])?;
-                ui::detail(&format!("Saved GCP project: {project}"));
-                project
-            }
-        },
+        None => select_project(&account, interactive)?,
     };
     Gcloud::new(project)
 }
@@ -107,7 +98,7 @@ fn active_account() -> Result<Option<String>> {
 fn select_project(account: &str, interactive: bool) -> Result<String> {
     require_interactive(
         interactive,
-        "Choose a GCP project with `--project PROJECT_ID`, or run `gcloud config set project PROJECT_ID`, then rerun setup",
+        "Choose a GCP project with `--project PROJECT_ID`, then rerun setup",
     )?;
     let projects = Gcloud::global_json(&["projects", "list", "--sort-by=projectId"])?;
     let projects = projects
