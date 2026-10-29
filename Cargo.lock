@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-admin-tool"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "aegis-dto",
  "aegis-tool",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-api"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "aegis-tool"
-version = "0.4.14"
+version = "0.4.15"
 dependencies = [
  "aegis-dto",
  "anyhow",
@@ -672,9 +672,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "capulus"
-version = "0.6.13"
+version = "0.6.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4bcce8a9765d0f46da36b6491515993c6489c5cf933830a5eaad36103c5466d"
+checksum = "b319988e5e5911e374fb0e32981513643e29c419216ce9ba6015c656b0ccc3fb"
 dependencies = [
  "anyhow",
  "ciborium",
