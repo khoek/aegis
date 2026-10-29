@@ -1024,6 +1024,15 @@ pub struct EnrollArgs {
 
     #[arg(
         long,
+        value_enum,
+        value_name = "YES|NO",
+        conflicts_with = "invitation",
+        help = "Whether the enrolled machine accepts inbound aegis SSH; defaults to yes"
+    )]
+    pub inbound_ssh: Option<Choice>,
+
+    #[arg(
+        long,
         value_name = "[USER@]HOST[:PORT]",
         conflicts_with = "local",
         required_unless_present = "local",

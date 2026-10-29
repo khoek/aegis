@@ -15,8 +15,8 @@ use ssh_key::PublicKey;
 
 use crate::api::{ApiClient, ApiClientError, AuthenticatedApiClient, HostAgentApiClient};
 use crate::cli::{
-    AdvancedCommands, AgentMode, AgentTokenCommands, Commands, EnrollArgs, EnrollmentAdminCommands,
-    ManageCommands, UnenrollArgs,
+    AdvancedCommands, AgentMode, AgentTokenCommands, Choice, Commands, EnrollArgs,
+    EnrollmentAdminCommands, ManageCommands, UnenrollArgs,
 };
 use crate::command::CommandOutput;
 use crate::config::{
@@ -904,7 +904,12 @@ fn run_enroll(api_base_override: Option<&str>, args: &EnrollArgs) -> Result<i32>
                     }
                 },
             };
-            let enrollment = crate::invitation::reserve(&mut api, alias, AegisHostMode::Leaf)?;
+            let enrollment = crate::invitation::reserve(
+                &mut api,
+                alias,
+                AegisHostMode::Leaf,
+                args.inbound_ssh.is_none_or(Choice::as_bool),
+            )?;
             crate::invitation::issue(&mut api, &enrollment.host_id)?
         }
     };
@@ -1573,6 +1578,7 @@ pub fn enroll_local_machine(api_base: &str, invitation: std::path::PathBuf) -> R
         &EnrollArgs {
             invitation: Some(invitation),
             name: None,
+            inbound_ssh: None,
             remote: None,
             local: true,
             user: None,
@@ -2031,6 +2037,7 @@ mod tests {
         let args = EnrollArgs {
             invitation: None,
             name: None,
+            inbound_ssh: None,
             remote: None,
             local: true,
             user: None,

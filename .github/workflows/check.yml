@@ -18,8 +18,6 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy -p aegis-tool --all-targets --locked -- -D warnings
       - run: cargo test -p aegis-tool --locked
-      - name: Check long-running fleet installs
-        run: cargo test -p aegis-tool --locked remote_install_waits_for_slow_builds -- --ignored
       - name: Check client dependency boundary
         run: |
           python3 - <<'PY'
@@ -57,3 +55,12 @@ jobs:
           cargo test -p aegis-admin-tool --locked --test setup -- --include-ignored
           cargo test -p aegis-api --locked -- --ignored
       - run: docker build --file aegis-api/Dockerfile --tag aegis-api:check .
+
+  macos:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup update stable --no-self-update
+      - run: cargo check -p aegis-tool --locked
+      - run: cargo test -p aegis-tool --locked

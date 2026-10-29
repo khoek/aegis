@@ -1,6 +1,8 @@
 use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
 use aegis_dto::platform::OperatingSystem;
+#[cfg(target_os = "macos")]
+use anyhow::Context;
 use anyhow::{Result, ensure};
 
 use crate::command::{require_success, run_capture};
@@ -112,22 +114,34 @@ pub(crate) fn reload() -> Result<()> {
 const OWNED_INCLUDE: &str = "# BEGIN Aegis certificate authentication\nInclude /etc/ssh/sshd_config.d/90-aegis.conf\n# END Aegis certificate authentication\n";
 
 #[cfg(target_os = "macos")]
+const OWNED_INLINE_BEGIN: &str = "# BEGIN Aegis certificate authentication (inline)\n";
+
+#[cfg(target_os = "macos")]
+const OWNED_INLINE_END: &str = "# END Aegis certificate authentication (inline)\n";
+
+#[cfg(target_os = "macos")]
 pub(crate) fn ensure_certificate_integration() -> Result<()> {
     use std::path::Path;
     let dropin = Path::new(crate::app::AEGIS_SSHD_DROPIN);
     let desired = fs::read_to_string(dropin)?;
+    let path = Path::new("/etc/ssh/sshd_config");
+    let previous = fs::read_to_string(path)?;
+    let include_supported = sshd_supports_include()?;
     if effective_configuration_contains(&desired)? {
         return Ok(());
     }
-    let path = Path::new("/etc/ssh/sshd_config");
-    let previous = fs::read_to_string(path)?;
     ensure!(
         !previous.contains("# BEGIN Aegis certificate authentication"),
-        "the owned Aegis SSH include is present but ineffective; repair conflicting SSH policy"
+        "the owned aegis SSH integration is present but ineffective; repair conflicting SSH policy"
     );
+    let owned = if include_supported {
+        OWNED_INCLUDE.to_string()
+    } else {
+        format!("{OWNED_INLINE_BEGIN}{desired}{OWNED_INLINE_END}")
+    };
     capulus::store::atomic_write(
         path,
-        format!("{OWNED_INCLUDE}{previous}").as_bytes(),
+        format!("{owned}{previous}").as_bytes(),
         Some(0o644),
         None,
     )?;
@@ -152,6 +166,29 @@ pub(crate) fn ensure_certificate_integration() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn sshd_supports_include() -> Result<bool> {
+    let output = run_capture(Command::new("/usr/sbin/sshd").arg("-V"))?;
+    let version = output
+        .stderr
+        .lines()
+        .chain(output.stdout.lines())
+        .flat_map(str::split_whitespace)
+        .find_map(|word| word.strip_prefix("OpenSSH_"))
+        .context("sshd -V did not report an OpenSSH version")?;
+    let mut components = version.split('.');
+    let major = components
+        .next()
+        .context("OpenSSH version omitted its major component")?
+        .parse::<u32>()?;
+    let minor = components
+        .next()
+        .context("OpenSSH version omitted its minor component")?
+        .trim_end_matches(|character: char| !character.is_ascii_digit())
+        .parse::<u32>()?;
+    Ok((major, minor) >= (8, 2))
+}
+
+#[cfg(target_os = "macos")]
 fn effective_configuration_contains(desired: &str) -> Result<bool> {
     let output = require_success(
         "inspect effective SSH server configuration",
@@ -170,24 +207,39 @@ fn effective_configuration_contains(desired: &str) -> Result<bool> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn remove_certificate_integration() -> Result<()> {
+    use std::io::ErrorKind;
+
     let path = std::path::Path::new("/etc/ssh/sshd_config");
     let previous = fs::read_to_string(path)?;
-    if !previous.contains("# BEGIN Aegis certificate authentication") {
-        return Ok(());
+    let restored = if previous.starts_with(OWNED_INCLUDE) {
+        &previous.as_bytes()[OWNED_INCLUDE.len()..]
+    } else if previous.starts_with(OWNED_INLINE_BEGIN) {
+        let end = previous
+            .find(OWNED_INLINE_END)
+            .map(|index| index + OWNED_INLINE_END.len())
+            .context("owned inline SSH integration is truncated")?;
+        &previous.as_bytes()[end..]
+    } else {
+        ensure!(
+            !previous.contains("# BEGIN Aegis certificate authentication"),
+            "owned SSH integration was edited; retained for explicit repair"
+        );
+        &[]
+    };
+    if previous.starts_with(OWNED_INCLUDE) || previous.starts_with(OWNED_INLINE_BEGIN) {
+        capulus::store::atomic_write(path, restored, Some(0o644), None)?;
     }
-    ensure!(
-        previous.starts_with(OWNED_INCLUDE),
-        "owned SSH include was edited; retained for explicit repair"
-    );
-    capulus::store::atomic_write(
-        path,
-        &previous.as_bytes()[OWNED_INCLUDE.len()..],
-        Some(0o644),
-        None,
-    )?;
     if let Err(error) = validate() {
         capulus::store::atomic_write(path, previous.as_bytes(), Some(0o644), None)?;
         return Err(error.context("SSH include removal rejected; previous sshd_config restored"));
+    }
+    match fs::remove_file(crate::app::AEGIS_SSHD_DROPIN) {
+        Ok(())
+        | Err(std::io::Error {
+            kind: ErrorKind::NotFound,
+            ..
+        }) => {}
+        Err(error) => return Err(error.into()),
     }
     Ok(())
 }

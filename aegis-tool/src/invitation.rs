@@ -51,13 +51,14 @@ pub fn reserve(
     api: &mut AuthenticatedApiClient,
     alias: HostAlias,
     mode: AegisHostMode,
+    inbound_ssh: bool,
 ) -> Result<aegis_dto::protocol::AegisEnrollment> {
     api.require_user_admin("enroll a machine")?;
     api.create_enrollment(&AegisEnrollmentCreateRequest {
         aliases: HostAliases::new(vec![alias])?,
         network: "aegis".into(),
         mode,
-        ssh: Some(AegisEnrollmentSsh {
+        ssh: inbound_ssh.then_some(AegisEnrollmentSsh {
             port: Some(22),
             external_principals: Vec::new(),
         }),

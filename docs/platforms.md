@@ -23,6 +23,9 @@ or firewall rules. Unsupported operations fail before mutation. WireGuard keys
 are generated in Rust; networking needs no Homebrew services or separately
 configured daemons. The helper sources and licenses ship with the Cargo package.
 
+Browser handoff uses `/usr/bin/open` without linking AppKit, so a Homebrew
+`DYLD_LIBRARY_PATH` cannot replace Apple ImageIO libraries during aegis startup.
+
 Install the CLI with `cargo install --locked aegis-tool`, then enroll with the
 invitation supplied by your administrator. Apple command-line developer tools
 are needed to build it. If inbound SSH is selected, enrollment guides enabling

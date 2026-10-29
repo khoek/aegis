@@ -99,6 +99,9 @@ with `aegis manage enrollment credential HOST_ID`, and run `aegis manage enroll
 successful enrollment removes the local file. Revoke unused reservations with
 `aegis manage enrollment cancel`.
 
+For an administrator-created local enrollment, use `--inbound-ssh no` when the
+machine should not accept certificate-backed inbound SSH.
+
 For an existing deployment, `aegis-admin connect NAMESPACE --project PROJECT
 --database DATABASE` saves its administration connection without provisioning
 resources or replacing keys.

@@ -443,7 +443,7 @@ impl Session {
     }
 
     fn verify_routes(&self) -> Result<Vec<IpAddr>> {
-        if self.babel.is_none() {
+        if self.babel.is_none() || !self.journal.control_path().exists() {
             return Ok(Vec::new());
         }
         let routes = babel::installed_routes(&babel_dump(&self.journal.control_path())?)?;

@@ -301,6 +301,9 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
             Some(value) => value.trim_end_matches('/').to_owned(),
             None if args.yes => format!("{backend}/v2"),
             None => {
+                ui::require_interactive(
+                    "Run `aegis-admin setup --yes` to accept the resource plan and use the default Cloud Run endpoint without a terminal; use --endpoint URL for a custom endpoint",
+                )?;
                 let answer: String = prompt(
                     "Custom public endpoint (leave blank for Cloud Run)",
                     Some(""),
@@ -549,6 +552,7 @@ impl Deployment {
                     &mut api,
                     alias,
                     aegis_dto::AegisHostMode::Leaf,
+                    true,
                 )?;
                 self.local_host = Some(enrollment.host_id);
                 self.persist().context("machine reservation committed; save its host ID in the setup receipt before retrying")?;

@@ -621,7 +621,7 @@ fn ensure_hub(deployment: &mut Deployment, region: &str) -> Result<()> {
         Some(host) => host,
         None => {
             let enrollment =
-                invitation::reserve(&mut api, HostAlias::parse(&name)?, AegisHostMode::Hub)?;
+                invitation::reserve(&mut api, HostAlias::parse(&name)?, AegisHostMode::Hub, true)?;
             deployment
                 .hubs
                 .get_mut(region)

@@ -192,10 +192,32 @@ impl ResolvedInstall {
         }
 
         workflow.set_phase("configuring SSH certificate authentication");
+        #[cfg(target_os = "macos")]
+        let previous_dropin = fs::read_to_string(AEGIS_SSHD_DROPIN).ok();
         self.apply_ssh_assets()?;
         #[cfg(target_os = "macos")]
         if self.inbound_ssh {
-            crate::ssh_service::ensure_certificate_integration()?;
+            if let Err(error) = crate::ssh_service::ensure_certificate_integration() {
+                let restore = match previous_dropin {
+                    Some(previous) => system::TextFile::new(Path::new(AEGIS_SSHD_DROPIN))
+                        .write_atomic(&previous, 0o644),
+                    None => system::TextFile::new(Path::new(AEGIS_SSHD_DROPIN)).remove_if_exists(),
+                };
+                let certificate = self
+                    .cert
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new(REMOTE_HOST_CERT_PATH));
+                let remove_certificate = system::TextFile::new(certificate).remove_if_exists();
+                if let Err(restore_error) = restore {
+                    return Err(error).context(format!(
+                        "SSH integration failed and restoring {} failed: {restore_error:#}",
+                        AEGIS_SSHD_DROPIN
+                    ));
+                }
+                remove_certificate
+                    .context("SSH integration failed; removing the host certificate failed")?;
+                return Err(error);
+            }
         }
         workflow.set_phase("configuring the initial Aegis user grant");
         self.apply_initial_principal_grant()?;
