@@ -2226,6 +2226,9 @@ mod tests {
             script.find("install --locked --force").unwrap()
                 < script.find("agent prepare-identity").unwrap()
         );
+        assert!(script.contains("https://index.crates.io/ae/gi/aegis-tool"));
+        assert!(script.contains("--registry crates-io aegis-tool --bin aegis"));
+        assert!(!script.contains("--registry crates-io --version"));
         assert!(script.contains("agent prepare-identity --inbound-ssh"));
         assert!(script.contains("system_aegis=/Library/PrivilegedHelperTools/aegis"));
         assert_bash_syntax(&script);

@@ -1,5 +1,10 @@
 set -euo pipefail
-: "${aegis_bootstrap_version:?exact Aegis version required}"
+aegis_bootstrap_version="$(
+  curl --fail --silent --show-error --location --connect-timeout 15 --max-time 60 \
+    --max-filesize 8388608 https://index.crates.io/ae/gi/aegis-tool |
+    sed -nE 's/.*"vers":"([0-9]+\.[0-9]+\.[0-9]+)".*"yanked":false.*/\1/p' |
+    tail -n 1
+)"
 [[ "$aegis_bootstrap_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 export aegis_bootstrap_version
 case "$(uname -s)" in
@@ -80,7 +85,7 @@ test "$(digest "$bootstrap/rustup-init")" = "$expected"
 chmod 700 "$bootstrap/rustup-init"
 deadline 900 "$bootstrap/rustup-init" -y --profile minimal --no-modify-path --default-toolchain stable
 deadline 2700 "$CARGO_HOME/bin/cargo" install --locked --force --root "$install_root" \
-  --registry crates-io --version "$aegis_bootstrap_version" aegis-tool --bin aegis
+  --registry crates-io aegis-tool --bin aegis
 test "$(deadline 10 "$install_root/bin/aegis" --version | awk '{print $NF}')" = "$aegis_bootstrap_version"
 install -o root -g "$root_group" -m 0755 "$install_root/bin/aegis" "$system_stage"
 test "$(deadline 10 "$system_stage" --version | awk '{print $NF}')" = "$aegis_bootstrap_version"

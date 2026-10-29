@@ -130,9 +130,8 @@ sudo chmod 644 {REMOTE_HOST_CERT_PATH}\n"
 
 pub fn system_program_bootstrap_script(use_sudo: bool) -> String {
     format!(
-        "{sudo}bash -seuo pipefail <<'EOF_AEGIS_BOOTSTRAP'\naegis_bootstrap_version={version}\n{script}\nEOF_AEGIS_BOOTSTRAP\n",
+        "{sudo}bash -seuo pipefail <<'EOF_AEGIS_BOOTSTRAP'\n{script}\nEOF_AEGIS_BOOTSTRAP\n",
         sudo = if use_sudo { "sudo " } else { "" },
-        version = sh_quote(env!("CARGO_PKG_VERSION")),
         script = include_str!("../../assets/bootstrap.sh"),
     )
 }
