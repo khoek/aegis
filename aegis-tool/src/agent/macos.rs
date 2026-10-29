@@ -482,6 +482,9 @@ impl Session {
                         family(route.address),
                         "-host",
                         &route.address.to_string(),
+                        // The stable address also lives on lo0; without -ifp macOS rebinds the route there.
+                        "-ifp",
+                        &route.interface,
                         "-ifa",
                         &expected.to_string(),
                     ],
