@@ -323,6 +323,8 @@ fn remote_apply_disable_script() -> String {
            sudo systemctl reload ssh.service\n\
          elif sudo systemctl is-active --quiet sshd.service; then\n\
            sudo systemctl reload sshd.service\n\
+         elif sudo systemctl is-active --quiet ssh.socket; then\n\
+           : # Socket activation starts sshd with the validated configuration.\n\
          else\n\
            echo 'SSH service is not active; refusing to leave the host without a validated reload' >&2\n\
            exit 1\n\
@@ -429,6 +431,93 @@ fn local_allowed_addresses() -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    fn run_disable_script(environment: &[(&str, &str)]) -> (std::process::Output, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let sudo = directory.path().join("sudo");
+        fs::write(
+            &sudo,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$CALLS"
+case "$1" in
+  -v|rm|install|chmod) exit 0 ;;
+  sshd|/usr/sbin/sshd) test "$SSHD_VALID" = yes ;;
+  systemctl)
+    case "$2" in
+      is-active) test "$4" = "$ACTIVE_UNIT" ;;
+      reload) test "$RELOAD_SUCCEEDS" = yes ;;
+      *) exit 99 ;;
+    esac ;;
+  *) exit 99 ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&sudo, fs::Permissions::from_mode(0o755)).unwrap();
+        let calls = directory.path().join("calls");
+        let output = Command::new("bash")
+            .args(["-c", &remote_apply_disable_script()])
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    directory.path().display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("CALLS", &calls)
+            .env("SSHD_VALID", "yes")
+            .env("ACTIVE_UNIT", "")
+            .env("RELOAD_SUCCEEDS", "yes")
+            .envs(environment.iter().copied())
+            .output()
+            .unwrap();
+        (output, fs::read_to_string(calls).unwrap())
+    }
+
+    #[test]
+    fn lockdown_disable_accepts_validated_socket_activated_ssh() {
+        let (output, calls) = run_disable_script(&[("ACTIVE_UNIT", "ssh.socket")]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(calls.contains("sshd -t\n"));
+        assert!(!calls.contains("systemctl reload "));
+        assert!(!calls.contains("systemctl start "));
+    }
+
+    #[test]
+    fn lockdown_disable_reloads_running_ssh_services() {
+        for unit in ["ssh.service", "sshd.service"] {
+            let (output, calls) = run_disable_script(&[("ACTIVE_UNIT", unit)]);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(calls.contains(&format!("systemctl reload {unit}\n")));
+        }
+    }
+
+    #[test]
+    fn lockdown_disable_rejects_invalid_config_before_service_changes() {
+        let (output, calls) =
+            run_disable_script(&[("ACTIVE_UNIT", "ssh.socket"), ("SSHD_VALID", "no")]);
+        assert!(!output.status.success());
+        assert!(!calls.contains("systemctl "));
+    }
+
+    #[test]
+    fn lockdown_disable_rejects_inactive_ssh_and_failed_reloads() {
+        assert!(!run_disable_script(&[]).0.status.success());
+        let (output, calls) =
+            run_disable_script(&[("ACTIVE_UNIT", "ssh.service"), ("RELOAD_SUCCEEDS", "no")]);
+        assert!(!output.status.success());
+        assert!(calls.ends_with("systemctl reload ssh.service\n"));
+    }
 
     #[test]
     fn lockdown_host_reports_separate_state_from_warnings() {
