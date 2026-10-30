@@ -60,6 +60,7 @@ pub(super) fn check_project(cloud: &Gcloud, interactive: bool) -> Result<()> {
         "cloudresourcemanager.googleapis.com",
         "cloudbilling.googleapis.com",
         "iamcredentials.googleapis.com",
+        "compute.googleapis.com",
     ]);
     if activation.as_ref().is_err_and(capulus::error_is_cancelled) {
         ui::warn(
@@ -76,6 +77,17 @@ pub(super) fn check_project(cloud: &Gcloud, interactive: bool) -> Result<()> {
         ui::warn(retained);
     }
     billing.context(retained)
+}
+
+pub(super) fn check_region(cloud: &Gcloud, region: &str) -> Result<()> {
+    let value = cloud
+        .json(&["compute", "regions", "describe", region])
+        .with_context(|| format!("could not validate GCP region {region}"))?;
+    ensure!(
+        value["name"] == region && value["status"] == "UP",
+        "GCP region {region} is unavailable"
+    );
+    Ok(())
 }
 
 fn active_account() -> Result<Option<String>> {

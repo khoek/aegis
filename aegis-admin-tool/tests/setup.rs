@@ -71,7 +71,10 @@ fn fresh_setup_guides_sign_in_configuration_before_creating_resources() {
     );
     assert!(calls.iter().any(|call| call[0] == "billing"));
     assert!(calls.iter().all(|call| {
-        ["version", "auth", "services", "billing", "projects"].contains(&call[0].as_str().unwrap())
+        [
+            "version", "auth", "services", "billing", "projects", "compute",
+        ]
+        .contains(&call[0].as_str().unwrap())
     }));
     assert!(
         !dir.path()

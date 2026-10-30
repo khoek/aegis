@@ -265,6 +265,10 @@ pub(super) fn setup(args: SetupArgs) -> Result<()> {
     };
     ensure!(valid_region(&region), "invalid GCP region");
     super::prerequisites::check_project(&cloud, !args.yes)?;
+    super::prerequisites::check_region(&cloud, &region)?;
+    for hub_region in &args.hub_regions {
+        super::prerequisites::check_region(&cloud, hub_region)?;
+    }
     let path = receipt_path(&project)?;
     let mut client_secret = None;
     let mut deployment = if path.exists() {
@@ -643,13 +647,18 @@ impl Deployment {
             .iter()
             .any(|account| account["email"] == email)
         {
-            cloud.json(&[
+            match cloud.json(&[
                 "iam",
                 "service-accounts",
                 "create",
                 SERVICE,
                 "--display-name=Aegis API runtime",
-            ])?;
+            ]) {
+                Ok(_) => {}
+                Err(error) if error.to_string().contains("already exists") => {}
+                Err(error) => return Err(error),
+            }
+            self.wait_runtime_account(&cloud, &email)?;
         }
         cloud.json(&["projects", "add-iam-policy-binding", &self.config.project,
             "--member", &format!("serviceAccount:{email}"), "--role=roles/datastore.user",
@@ -749,6 +758,32 @@ impl Deployment {
     }
     fn runtime_account(&self) -> String {
         format!("{SERVICE}@{}.iam.gserviceaccount.com", self.config.project)
+    }
+    fn wait_runtime_account(&self, cloud: &Gcloud, email: &str) -> Result<()> {
+        let timeout = Duration::from_secs(180);
+        let deadline = Instant::now() + timeout;
+        let task = ui::task(ui::TaskOptions {
+            label: "Waiting for API runtime service account".into(),
+            deadline: Some(timeout),
+            ..Default::default()
+        })?;
+        loop {
+            let accounts = cloud.json(&["iam", "service-accounts", "list"])?;
+            if array(&accounts)?
+                .iter()
+                .any(|account| account["email"] == email)
+            {
+                task.finish_and_clear();
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "GCP service account {email} was not visible after three minutes; rerun setup"
+            );
+            task.set_phase("GCP is propagating the service account");
+            ui::sleep(Duration::from_secs(3).min(remaining))?;
+        }
     }
     fn wait_runtime_access(&self) -> Result<()> {
         let timeout = Duration::from_secs(8 * 60);

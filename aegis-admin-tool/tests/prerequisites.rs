@@ -238,8 +238,10 @@ fn interactive_prerequisites_resume_after_external_repairs() {
             output.stderr
         );
         assert!(fixture.calls().iter().all(|call| {
-            ["version", "auth", "projects", "services", "billing"]
-                .contains(&call[0].as_str().unwrap())
+            [
+                "version", "auth", "projects", "services", "billing", "compute",
+            ]
+            .contains(&call[0].as_str().unwrap())
         }));
         if scenario == "interrupt" {
             assert!(!fixture.calls().iter().any(|call| call[0] == "services"));

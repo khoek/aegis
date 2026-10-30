@@ -26,6 +26,8 @@ elif args[:2] == ["billing", "projects"]:
     result = {"billingEnabled": state.get("billing_enabled", True) or path.with_suffix(".billing-enabled").exists()}
 elif args[:2] == ["services", "enable"]:
     pass
+elif args[:3] == ["compute", "regions", "describe"]:
+    result = {"name": args[3], "status": "UP"}
 elif command == ("projects", "describe", project):
     result = {"projectNumber": "1234567890"}
 elif args[:2] == ["auth", "print-access-token"]:
