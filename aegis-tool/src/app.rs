@@ -2566,6 +2566,7 @@ mod tests {
         assert!(content.contains("PasswordAuthentication no"));
         assert!(content.contains("KbdInteractiveAuthentication no"));
         assert!(content.contains("AuthenticationMethods publickey"));
+        assert!(!content.contains("GSSAPIAuthentication"));
         assert!(content.contains("AuthorizedKeysFile none"));
         assert!(content.contains("Match LocalAddress *,!10.75.1.42"));
         assert!(content.contains(",!10.75.99.9"));

@@ -375,8 +375,9 @@ pub(super) fn dropin_contents(allowed_local_addresses: &[String]) -> String {
     for address in allowed_local_addresses {
         match_line.push_str(&format!(",!{address}"));
     }
+    // AuthenticationMethods excludes GSSAPI without relying on build-specific options.
     format!(
-        "# Managed by aegis. Restricts SSH to certificate-backed publickey auth on WireGuard only.\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nGSSAPIAuthentication no\nHostbasedAuthentication no\nPubkeyAuthentication yes\nAuthenticationMethods publickey\nAuthorizedKeysFile none\n{match_line}\n  PubkeyAuthentication no\n"
+        "# Managed by aegis. Restricts SSH to certificate-backed publickey auth on WireGuard only.\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\nHostbasedAuthentication no\nPubkeyAuthentication yes\nAuthenticationMethods publickey\nAuthorizedKeysFile none\n{match_line}\n  PubkeyAuthentication no\n"
     )
 }
 
@@ -432,6 +433,56 @@ fn local_allowed_addresses() -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use std::{os::unix::fs::PermissionsExt, process::Command};
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore = "requires an installed OpenSSH server and ssh-keygen"]
+    fn lockdown_dropin_is_accepted_by_installed_sshd() {
+        let directory = tempfile::tempdir().unwrap();
+        let key = directory.path().join("host_key");
+        crate::command::require_success(
+            "generate a temporary SSH host key",
+            Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                .arg(&key),
+        )
+        .unwrap();
+        let config = directory.path().join("sshd_config");
+        let addresses = ["192.0.2.10".to_string(), "2001:db8::10".to_string()];
+        fs::write(&config, dropin_contents(&addresses)).unwrap();
+        for address in addresses {
+            let output = crate::command::require_success(
+                "inspect the generated lockdown configuration",
+                Command::new("/usr/sbin/sshd")
+                    .args(["-T", "-f"])
+                    .arg(&config)
+                    .arg("-h")
+                    .arg(&key)
+                    .arg("-C")
+                    .arg(format!(
+                        "user=aegis-test,host=client,addr=198.51.100.1,laddr={address},lport=22"
+                    )),
+            )
+            .unwrap();
+            assert!(output.stderr.trim().is_empty(), "{}", output.stderr);
+            for setting in [
+                "authenticationmethods publickey",
+                "pubkeyauthentication yes",
+                "passwordauthentication no",
+                "kbdinteractiveauthentication no",
+                "hostbasedauthentication no",
+            ] {
+                assert!(
+                    output
+                        .stdout
+                        .lines()
+                        .any(|line| line.trim().eq_ignore_ascii_case(setting)),
+                    "missing effective setting: {setting}\n{}",
+                    output.stdout
+                );
+            }
+        }
+    }
 
     fn run_disable_script(environment: &[(&str, &str)]) -> (std::process::Output, String) {
         let directory = tempfile::tempdir().unwrap();

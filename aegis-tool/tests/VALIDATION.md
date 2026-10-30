@@ -4,6 +4,18 @@ Run `cargo test --workspace` for protocol, enrollment, authorization, configurat
 and UI tests. Firestore and deployment recovery tests use a local emulator; see
 [releasing](../../docs/releasing.md).
 
+On Linux with OpenSSH installed, exercise the generated lockdown configuration
+against the actual SSH server parser:
+
+```sh
+cargo test -p aegis-tool --lib app::lockdown::tests::lockdown_dropin_is_accepted_by_installed_sshd \
+  -- --exact --ignored --nocapture
+```
+
+Run this on an OpenSSH build without GSSAPI support to catch unsupported-option
+warnings. It uses a temporary configuration and host key, checks the effective
+authentication settings for IPv4 and IPv6, and does not modify the running server.
+
 Run `cargo test -p aegis-tool` to exercise the client independently of the API
 and administration packages. CLI tests cover the executable boundary.
 
