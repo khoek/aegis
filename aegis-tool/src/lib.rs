@@ -37,14 +37,14 @@ pub fn run_cli() -> capulus::CliTermination {
         ui: ui_options,
         command,
     } = Cli::parse();
-    if matches!(command, Commands::Agent(_)) && (api_base.is_some() || namespace.is_some()) {
+    if matches!(command, Some(Commands::Agent(_))) && (api_base.is_some() || namespace.is_some()) {
         return capulus::CliTermination::without_ui(Err(anyhow::anyhow!(
             "agent commands use the enrolled context in their configuration; --api-base and --namespace apply to CLI operations"
         )));
     }
     let ui_configuration = ui_options.options();
     match command {
-        Commands::Agent(agent) => match agent.command {
+        Some(Commands::Agent(agent)) => match agent.command {
             AgentCommands::DirectSsh => {
                 if let Err(error) = ui::init(ui_configuration) {
                     return capulus::CliTermination::without_ui(Err(error));

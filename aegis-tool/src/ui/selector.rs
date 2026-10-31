@@ -10,7 +10,7 @@ use crossterm::{
     style::Print,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use dialoguer::console::{measure_text_width, truncate_str};
+use dialoguer::console::{Style, measure_text_width, strip_ansi_codes, truncate_str};
 
 use super::{Color, RenderTarget};
 
@@ -117,17 +117,26 @@ impl Selection {
             let label = truncate_str(&choice.label, label_width, "…");
             let padding = " ".repeat(label_width.saturating_sub(measure_text_width(&label)));
             let marker = if index == self.selected { ">" } else { " " };
-            let label = if index == self.selected {
-                target.paint(&label, Color::Cyan)
-            } else {
-                label.into_owned()
-            };
             let status = target.style(
                 &truncate_str(&status, status_width, "…"),
                 color,
                 super::TextEffect::None,
             );
-            line(row, &format!("{marker} {label}{padding}  {status}"))?;
+            let text = format!("{marker} {label}{padding}  {status}");
+            let text = if index == self.selected {
+                // Reverse video highlights the whole row, including with --color never.
+                // Strip nested styles so their resets cannot break the highlight.
+                let text = strip_ansi_codes(&text);
+                let padding = " ".repeat(width.saturating_sub(measure_text_width(&text)));
+                Style::new()
+                    .reverse()
+                    .force_styling(true)
+                    .apply_to(format!("{text}{padding}"))
+                    .to_string()
+            } else {
+                text
+            };
+            line(row, &text)?;
             row += 1;
         }
         let checked = self
@@ -224,11 +233,8 @@ pub(crate) fn select_live(
         "selector prompt is empty"
     );
     ensure!(!options.choices.is_empty(), "no available targets");
-    if options.choices.len() == 1 {
-        return Ok(0);
-    }
     if !screen.active {
-        bail!("multiple targets are available; select one from an interactive terminal");
+        bail!("host selection requires an interactive terminal");
     }
     super::suspend(|| {
         let _terminal = RawInput::enter()?;

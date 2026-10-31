@@ -13,9 +13,10 @@ const FIXTURE: &str = "AEGIS_SELECTOR_TEST_CHILD";
 
 #[test]
 fn terminal_fixture() {
-    if std::env::var_os(FIXTURE).is_none() {
+    let Ok(count) = std::env::var(FIXTURE) else {
         return;
-    }
+    };
+    let count: usize = count.parse().unwrap();
     ui::init(capulus::ui::UiOptions {
         cancellation: capulus::ui::CancellationMode::Passive,
         ..Default::default()
@@ -27,7 +28,7 @@ fn terminal_fixture() {
             screen,
             SelectOptions {
                 prompt: "Connect to".into(),
-                choices: (0..13)
+                choices: (0..count)
                     .map(|index| Choice {
                         label: format!("host-{index}"),
                         status: ChoiceStatus::Checking,
@@ -66,7 +67,7 @@ struct TerminalChild {
 }
 
 impl TerminalChild {
-    fn start() -> Self {
+    fn start(count: usize) -> Self {
         let mut master = -1;
         let mut slave = -1;
         let size = libc::winsize {
@@ -97,7 +98,7 @@ impl TerminalChild {
                 "--exact",
                 "--nocapture",
             ])
-            .env(FIXTURE, "1")
+            .env(FIXTURE, count.to_string())
             .env("TERM", "xterm-256color")
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
@@ -142,7 +143,7 @@ impl Drop for TerminalChild {
 #[test]
 fn resized_handoff_and_cancellation_preserve_the_main_screen_and_input() {
     for cancel in [false, true] {
-        let mut child = TerminalChild::start();
+        let mut child = TerminalChild::start(13);
         let mut parser = vt100::Parser::new(20, 40, 1000);
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut selected = false;
@@ -157,6 +158,9 @@ fn resized_handoff_and_cancellation_preserve_the_main_screen_and_input() {
             child.read(&mut parser);
             let contents = parser.screen().contents();
             if !selected && contents.contains("0/13 checked") {
+                assert!(parser.screen().cell(1, 0).unwrap().inverse());
+                assert!(parser.screen().cell(1, 38).unwrap().inverse());
+                assert!(!parser.screen().cell(2, 0).unwrap().inverse());
                 child
                     .master
                     .write_all(if cancel { b"\x03" } else { b"\x1b[B\r" })
@@ -192,6 +196,35 @@ fn resized_handoff_and_cancellation_preserve_the_main_screen_and_input() {
             if contents.contains("INPUT_RESTORED") {
                 break;
             }
+        }
+    }
+}
+
+#[test]
+fn a_single_host_still_waits_for_selection_and_can_be_cancelled() {
+    let mut child = TerminalChild::start(1);
+    let mut parser = vt100::Parser::new(20, 40, 1000);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut cancelled = false;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "single-host picker timed out: {}",
+            parser.screen().contents()
+        );
+        child.read(&mut parser);
+        let contents = parser.screen().contents();
+        assert!(!contents.contains("SHELL_STARTED"));
+        if !cancelled && contents.contains("0/1 checked") {
+            assert!(contents.contains("host-0"));
+            assert!(parser.screen().cell(1, 0).unwrap().inverse());
+            child.master.write_all(b"\x1b").unwrap();
+            cancelled = true;
+        }
+        if contents.contains("CANCELLED") {
+            assert!(cancelled);
+            assert!(!parser.screen().alternate_screen());
+            break;
         }
     }
 }

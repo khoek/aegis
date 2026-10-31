@@ -233,6 +233,7 @@ pub(super) struct AssetPreparer<'a> {
     connect_host: String,
     presentation_host: Option<String>,
     requested_login_principal: Option<String>,
+    interactive_login: bool,
     strict_server_cert: bool,
 }
 
@@ -250,12 +251,18 @@ impl<'a> AssetPreparer<'a> {
             connect_host,
             presentation_host: None,
             requested_login_principal,
+            interactive_login: false,
             strict_server_cert: !no_server_cert,
         }
     }
 
     pub(super) fn with_presentation_host(mut self, presentation_host: String) -> Self {
         self.presentation_host = Some(presentation_host);
+        self
+    }
+
+    pub(super) fn with_interactive_login(mut self) -> Self {
+        self.interactive_login = true;
         self
     }
 
@@ -278,9 +285,21 @@ impl<'a> AssetPreparer<'a> {
     ) -> Result<PreparedConnect> {
         let identity = ClientIdentityCache::new(self.network, self.host.host_id, self.host.alias())
             .prepare(api, status)?;
+        let selected_login = if self.interactive_login
+            && self.requested_login_principal.is_none()
+            && identity.login_principals.len() > 1
+        {
+            Some(super::ssh::choose_login_principal(
+                &identity.login_principals,
+            )?)
+        } else {
+            None
+        };
         let login_principal = select_login_principal(
             self.host.alias().as_str(),
-            self.requested_login_principal.as_deref(),
+            selected_login
+                .as_deref()
+                .or(self.requested_login_principal.as_deref()),
             &identity.login_principals,
         )?;
         let known_hosts = if self.strict_server_cert {

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 #[command(
     name = "aegis",
     version,
-    about = "Authenticated SSH, networking, and fleet management.",
+    about = "Authenticated SSH, networking, and fleet management. Opens the host picker when no command is given.",
     infer_subcommands = true
 )]
 pub struct Cli {
@@ -34,7 +34,7 @@ pub struct Cli {
     pub ui: UiArgs,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -47,6 +47,9 @@ pub enum Commands {
         about = "Show cached hosts. Use --refresh to sync through the local aegis-agent first."
     )]
     List(ListArgs),
+
+    #[command(about = "Pick a host interactively and open SSH, with recent choices first.")]
+    Pick(PickArgs),
 
     #[command(
         name = "ssh",
@@ -83,6 +86,12 @@ pub enum Commands {
         about = "Technical Aegis maintenance, recovery, and forced reconciliation commands."
     )]
     Advanced(AdvancedArgs),
+}
+
+impl Default for Commands {
+    fn default() -> Self {
+        Self::Pick(PickArgs::default())
+    }
 }
 
 #[derive(Debug, Args)]
@@ -528,6 +537,55 @@ pub struct ListArgs {
         help = "Refresh the cached host inventory through the local aegis-agent"
     )]
     pub refresh: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PickArgs {
+    #[arg(long, default_value = "aegis", value_name = "NETWORK")]
+    pub network: String,
+
+    #[arg(
+        long,
+        short = 'u',
+        value_name = "USER",
+        help = "Remote Unix principal to log in as"
+    )]
+    pub user: Option<String>,
+
+    #[arg(long, help = "Include pending hosts in the picker")]
+    pub allow_pending: bool,
+
+    #[arg(long, help = "Refresh host inventory before opening the picker")]
+    pub refresh: bool,
+}
+
+impl Default for PickArgs {
+    fn default() -> Self {
+        Self {
+            network: aegis_dto::DEFAULT_AEGIS_NETWORK.to_string(),
+            user: None,
+            allow_pending: false,
+            refresh: false,
+        }
+    }
+}
+
+impl From<PickArgs> for SshArgs {
+    fn from(args: PickArgs) -> Self {
+        Self {
+            host: None,
+            network: args.network,
+            user: args.user,
+            allow_pending: args.allow_pending,
+            refresh: args.refresh,
+            use_endpoint: false,
+            ipv4: false,
+            ipv6: false,
+            no_server_cert: false,
+            command: None,
+            ssh_args: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone)]
@@ -1136,10 +1194,51 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     #[test]
+    fn missing_command_and_pick_have_the_same_defaults() {
+        for argv in [vec!["aegis"], vec!["aegis", "pick"]] {
+            let cli = Cli::try_parse_from(argv).unwrap();
+            let Commands::Pick(args) = cli.command.unwrap_or_default() else {
+                panic!("expected the host picker");
+            };
+            assert_eq!(args.network, aegis_dto::DEFAULT_AEGIS_NETWORK);
+            assert!(args.user.is_none());
+            assert!(!args.refresh);
+            assert!(!args.allow_pending);
+        }
+    }
+
+    #[test]
+    fn pick_preserves_context_and_connection_options() {
+        let cli = Cli::try_parse_from([
+            "aegis",
+            "--namespace",
+            "team",
+            "pick",
+            "--network",
+            "lab",
+            "--user",
+            "operator",
+            "--refresh",
+            "--allow-pending",
+        ])
+        .unwrap();
+        assert_eq!(cli.namespace.unwrap().as_str(), "team");
+        let Commands::Pick(args) = cli.command.unwrap() else {
+            panic!("expected the host picker");
+        };
+        let ssh = super::SshArgs::from(args);
+        assert!(ssh.host.is_none());
+        assert_eq!(ssh.network, "lab");
+        assert_eq!(ssh.user.as_deref(), Some("operator"));
+        assert!(ssh.refresh);
+        assert!(ssh.allow_pending);
+    }
+
+    #[test]
     fn cli_infers_top_level_subcommands() {
         let cli = Cli::try_parse_from(["aegis", "ss", "alpha"])
             .expect("top-level ssh subcommand should infer");
-        assert!(matches!(cli.command, Commands::Ssh(_)));
+        assert!(matches!(cli.command.unwrap(), Commands::Ssh(_)));
     }
 
     #[test]
@@ -1158,7 +1257,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "agent", "direct-ssh"])
             .expect("hidden direct SSH endpoint should parse");
         assert!(matches!(
-            cli.command,
+            cli.command.unwrap(),
             Commands::Agent(super::AgentNamespaceArgs {
                 command: super::AgentCommands::DirectSsh
             })
@@ -1210,7 +1309,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "manage", "principal", "allow", "OpaqueUserID"])
             .expect("principal allow command should parse");
 
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Principal(args) = args.command else {
@@ -1233,7 +1332,7 @@ mod tests {
             "--json",
         ])
         .expect("agent-token issue should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::AgentToken(args) = args.command else {
@@ -1255,7 +1354,7 @@ mod tests {
     fn cli_parses_json_host_inventory_command() {
         let cli = Cli::try_parse_from(["aegis", "manage", "host", "list", "--json"])
             .expect("host inventory command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Host(args) = args.command else {
@@ -1280,7 +1379,7 @@ mod tests {
             "45",
         ])
         .expect("promote command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Host(args) = args.command else {
@@ -1310,7 +1409,7 @@ mod tests {
             "--no-wait",
         ])
         .expect("--no-wait should override the default propagation wait");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Host(args) = args.command else {
@@ -1331,7 +1430,7 @@ mod tests {
     fn cli_parses_local_tunnel_commands() {
         let cli = Cli::try_parse_from(["aegis", "tunnel", "via", "leaf-a"])
             .expect("tunnel via command should parse");
-        let Commands::Tunnel(args) = cli.command else {
+        let Commands::Tunnel(args) = cli.command.unwrap() else {
             panic!("expected tunnel command");
         };
         let TunnelCommands::Via(args) = args.command else {
@@ -1341,7 +1440,7 @@ mod tests {
 
         let cli = Cli::try_parse_from(["aegis", "tunnel", "status", "--json"])
             .expect("tunnel status command should parse");
-        let Commands::Tunnel(args) = cli.command else {
+        let Commands::Tunnel(args) = cli.command.unwrap() else {
             panic!("expected tunnel command");
         };
         let TunnelCommands::Status(args) = args.command else {
@@ -1352,7 +1451,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "tunnel", "disable"])
             .expect("tunnel disable command should parse");
         assert!(matches!(
-            cli.command,
+            cli.command.unwrap(),
             Commands::Tunnel(super::TunnelArgs {
                 command: TunnelCommands::Disable
             })
@@ -1367,7 +1466,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "ssh", "--user", "root", "alpha"])
             .expect("ssh --user should parse");
 
-        let Commands::Ssh(args) = cli.command else {
+        let Commands::Ssh(args) = cli.command.unwrap() else {
             panic!("expected ssh command");
         };
         assert_eq!(Some("root".to_string()), args.user);
@@ -1377,7 +1476,7 @@ mod tests {
     #[test]
     fn cli_allows_interactive_ssh_without_a_host() {
         let cli = Cli::try_parse_from(["aegis", "ssh"]).expect("interactive SSH should parse");
-        let Commands::Ssh(args) = cli.command else {
+        let Commands::Ssh(args) = cli.command.unwrap() else {
             panic!("expected ssh command");
         };
         assert!(args.host.is_none());
@@ -1387,7 +1486,7 @@ mod tests {
     fn cli_pairs_a_global_satellite_without_a_hub_argument() {
         let cli = Cli::try_parse_from(["aegis", "manage", "satellite", "pair", "pocket-a"])
             .expect("global satellite pair should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Satellite(args) = args.command else {
@@ -1426,7 +1525,7 @@ mod tests {
             "--no-qr",
         ])
         .expect("explicit satellite output should allow suppressing QR codes");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Satellite(args) = args.command else {
@@ -1462,7 +1561,7 @@ mod tests {
         ])
         .expect("push command should parse");
 
-        let Commands::Push(args) = cli.command else {
+        let Commands::Push(args) = cli.command.unwrap() else {
             panic!("expected push command");
         };
         assert_eq!("alpha", args.host);
@@ -1484,7 +1583,7 @@ mod tests {
         ])
         .expect("pull command should parse");
 
-        let Commands::Pull(args) = cli.command else {
+        let Commands::Pull(args) = cli.command.unwrap() else {
             panic!("expected pull command");
         };
         assert_eq!("alpha", args.host);
@@ -1498,7 +1597,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "adv", "refresh-c"])
             .expect("nested advanced refresh-credentials subcommand should infer");
         assert!(matches!(
-            cli.command,
+            cli.command.unwrap(),
             Commands::Advanced(crate::cli::AdvancedArgs {
                 command: AdvancedCommands::RefreshCredentials(_)
             })
@@ -1507,7 +1606,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "adv", "recon"])
             .expect("nested advanced reconcile subcommand should infer");
         assert!(matches!(
-            cli.command,
+            cli.command.unwrap(),
             Commands::Advanced(crate::cli::AdvancedArgs {
                 command: AdvancedCommands::Reconcile(_)
             })
@@ -1521,7 +1620,7 @@ mod tests {
     fn cli_parses_waiting_redeploy() {
         let cli = Cli::try_parse_from(["aegis", "advanced", "redeploy", "--wait"])
             .expect("waiting redeploy should parse");
-        let Commands::Advanced(args) = cli.command else {
+        let Commands::Advanced(args) = cli.command.unwrap() else {
             panic!("expected advanced command");
         };
         let AdvancedCommands::Redeploy(args) = args.command else {
@@ -1535,7 +1634,7 @@ mod tests {
     fn cli_allows_fleet_redeploy_without_a_version() {
         let cli = Cli::try_parse_from(["aegis", "advanced", "fleet", "redeploy"])
             .expect("fleet redeploy should default to the latest registry version");
-        let Commands::Advanced(args) = cli.command else {
+        let Commands::Advanced(args) = cli.command.unwrap() else {
             panic!("expected advanced command");
         };
         let AdvancedCommands::Fleet(args) = args.command else {
@@ -1553,7 +1652,7 @@ mod tests {
             "1.2.3",
         ])
         .expect("fleet redeploy should accept an exact version");
-        let Commands::Advanced(args) = cli.command else {
+        let Commands::Advanced(args) = cli.command.unwrap() else {
             panic!("expected advanced command");
         };
         let AdvancedCommands::Fleet(args) = args.command else {
@@ -1567,7 +1666,7 @@ mod tests {
     fn cli_parses_remote_login_roles() {
         let cli = Cli::try_parse_from(["aegis", "manage", "login", "--remote-auth"])
             .expect("remote login initiator should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Login(args) = args.command else {
@@ -1579,7 +1678,7 @@ mod tests {
         let cli =
             Cli::try_parse_from(["aegis", "manage", "login", "--remote-auth-relay", "request"])
                 .expect("remote login relay should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Login(args) = args.command else {
@@ -1605,7 +1704,7 @@ mod tests {
         let cli = Cli::try_parse_from(["aegis", "ssh", "--network", "deus", "alpha"])
             .expect("ssh --network should parse");
 
-        let Commands::Ssh(args) = cli.command else {
+        let Commands::Ssh(args) = cli.command.unwrap() else {
             panic!("expected ssh command");
         };
         assert_eq!("deus", args.network);
@@ -1616,7 +1715,7 @@ mod tests {
     fn cli_parses_orphan_unenroll_without_remote_target() {
         let cli = Cli::try_parse_from(["aegis", "manage", "unenroll", "lost-host", "--orphan"])
             .expect("orphan unenroll should parse without a remote target");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::Unenroll(args) = args.command else {
@@ -1632,7 +1731,7 @@ mod tests {
     fn cli_parses_control_plane_reconciliation_commands() {
         let cli = Cli::try_parse_from(["aegis", "manage", "sync-dns", "--dry-run", "--json"])
             .expect("DNS sync command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::SyncDns(args) = args.command else {
@@ -1650,7 +1749,7 @@ mod tests {
             "--dry-run",
         ])
         .expect("TLS sync command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::SyncTls(args) = args.command else {
@@ -1672,7 +1771,7 @@ mod tests {
             "--json",
         ])
         .expect("agent token issue command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::AgentToken(args) = args.command else {
@@ -1693,7 +1792,7 @@ mod tests {
             "-",
         ])
         .expect("agent token revoke command should parse");
-        let Commands::Manage(args) = cli.command else {
+        let Commands::Manage(args) = cli.command.unwrap() else {
             panic!("expected manage command");
         };
         let ManageCommands::AgentToken(args) = args.command else {

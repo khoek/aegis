@@ -131,14 +131,15 @@ pub(crate) fn application_agent_info(product: &ManagedProduct) -> Result<AgentIn
 }
 
 fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
+    let command = cli.command.unwrap_or_default();
     warn_if_agent_version_mismatch();
-    let _system_lock = match command_system_lock_policy(&cli.command) {
+    let _system_lock = match command_system_lock_policy(&command) {
         SystemLockPolicy::FullCommand => Some(crate::locks::local_system_lock()?),
         SystemLockPolicy::None | SystemLockPolicy::SshSetup => None,
     };
-    let invitation_selected = matches!(&cli.command, Commands::Manage(args)
+    let invitation_selected = matches!(&command, Commands::Manage(args)
         if matches!(&args.command, ManageCommands::Enroll(args) if args.invitation.is_some()));
-    let local_agent_command = command_targets_local_agent(&cli.command);
+    let local_agent_command = command_targets_local_agent(&command);
     let selected_api_base = match cli.api_base {
         Some(base) => Some(base),
         None if invitation_selected => None,
@@ -171,9 +172,10 @@ fn run_inner(cli: crate::cli::Cli) -> Result<i32> {
         }
         None => selected_api_base,
     };
-    match cli.command {
+    match command {
         Commands::Agent(_) => unreachable!("agent commands bypass the interactive CLI"),
         Commands::List(args) => list::run(api_base_override.as_deref(), &args),
+        Commands::Pick(args) => ssh::run(api_base_override.as_deref(), &args.into()),
         Commands::Ssh(args) => ssh::run(api_base_override.as_deref(), &args),
         Commands::Push(args) => transfer::run(
             api_base_override.as_deref(),
@@ -316,7 +318,9 @@ enum SystemLockPolicy {
 fn command_system_lock_policy(command: &Commands) -> SystemLockPolicy {
     match command {
         Commands::Agent(_) | Commands::List(_) | Commands::Tunnel(_) => SystemLockPolicy::None,
-        Commands::Ssh(_) | Commands::Push(_) | Commands::Pull(_) => SystemLockPolicy::SshSetup,
+        Commands::Pick(_) | Commands::Ssh(_) | Commands::Push(_) | Commands::Pull(_) => {
+            SystemLockPolicy::SshSetup
+        }
         Commands::Manage(args) => manage_command_system_lock_policy(&args.command),
         Commands::Advanced(args) => advanced_command_system_lock_policy(&args.command),
     }
@@ -1659,7 +1663,7 @@ mod tests {
         host.aliases = aliases(alias);
     }
 
-    fn sample_host() -> CachedHost {
+    pub(super) fn sample_host() -> CachedHost {
         CachedHost {
             host_id: host_id("alpha"),
             aliases: aliases("alpha"),
@@ -3198,6 +3202,10 @@ mod tests {
         });
 
         assert_eq!(SystemLockPolicy::None, command_system_lock_policy(&list));
+        assert_eq!(
+            SystemLockPolicy::SshSetup,
+            command_system_lock_policy(&Commands::default())
+        );
         assert_eq!(SystemLockPolicy::SshSetup, command_system_lock_policy(&ssh));
         assert_eq!(
             SystemLockPolicy::SshSetup,

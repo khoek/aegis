@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use aegis_dto::{
     AegisHostMode,
-    protocol::{AegisHostMessage, AegisHostMessageLevel},
+    protocol::{AegisDirectTarget, AegisHostMessage, AegisHostMessageLevel},
 };
 use semver::Version;
 
@@ -151,6 +151,32 @@ pub(super) fn listed_host(host: &CachedHost) -> ListedHost {
         availability_note: None,
         version_note,
         host_label_color: host_is_leaf_without_configured_port(host).then_some(ui::Color::Yellow),
+        host_label_effect: ui::TextEffect::None,
+        text_effect: ui::TextEffect::None,
+    }
+}
+
+pub(super) fn listed_direct_target(target: &AegisDirectTarget) -> ListedHost {
+    let kind = match target.mode {
+        AegisHostMode::Hub => ListHostKind::Hub,
+        AegisHostMode::Leaf => ListHostKind::Leaf,
+    };
+    // The broker exposes only authorized connection details, not host metadata.
+    ListedHost {
+        marker: kind.marker(),
+        alias: target.aliases.primary().to_string(),
+        state: kind.state().to_string(),
+        lockdown_indicator: false,
+        color: kind.color(),
+        marker_warning: false,
+        pending: false,
+        host_label: format!("{}:{}", target.wireguard_ipv4, target.ssh_port),
+        wireguard_label: None,
+        status_note: None,
+        messages_note: None,
+        availability_note: None,
+        version_note: None,
+        host_label_color: None,
         host_label_effect: ui::TextEffect::None,
         text_effect: ui::TextEffect::None,
     }

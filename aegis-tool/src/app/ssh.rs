@@ -21,13 +21,16 @@ use crate::command::run_status;
 use crate::config::{CachedHost, ensure_client_dirs};
 use crate::ui::{self, Task, TaskOptions, TaskVisibility};
 
-use super::{connect, host, known_hosts_target, list, local_agent, mesh_route};
+use super::{connect, host, host_list, known_hosts_target, list, local_agent, mesh_route};
 
 const DIRECT_SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
 
 pub(super) fn run(api_base_override: Option<&str>, args: &SshArgs) -> Result<i32> {
     let mut args = args.clone();
     if args.host.is_none() {
+        ui::require_interactive(
+            "host selection requires an interactive terminal; use `aegis ssh HOST` to select a host explicitly",
+        )?;
         args.host = Some(select_normal_target(api_base_override, &args)?);
     }
     let handoff = SshHandoff::new(&args);
@@ -51,6 +54,19 @@ fn select_normal_target(api_base_override: Option<&str>, args: &SshArgs) -> Resu
     .filter(|host| (args.allow_pending || !host.pending) && host.ssh.is_some())
     .collect::<Vec<_>>();
     let history = SshHistory::load()?;
+    sort_recent_hosts(&mut hosts, &history, &args.network);
+    let choices = hosts
+        .iter()
+        .map(|host| HostChoice {
+            host: host_list::listed_host(host),
+            endpoint: list::SshReachabilityTarget::from_host(host),
+        })
+        .collect::<Vec<_>>();
+    let index = ui::screen(|screen| choose_host(screen, choices))?;
+    Ok(hosts[index].alias().to_string())
+}
+
+fn sort_recent_hosts(hosts: &mut [CachedHost], history: &SshHistory, network: &str) {
     hosts.sort_by(|left, right| {
         let left_hub = left.mode == aegis_dto::AegisHostMode::Hub;
         let right_hub = right.mode == aegis_dto::AegisHostMode::Hub;
@@ -58,28 +74,11 @@ fn select_normal_target(api_base_override: Option<&str>, args: &SshArgs) -> Resu
             .cmp(&right_hub)
             .then_with(|| {
                 history
-                    .accessed_unix(&args.network, &right.host_id)
-                    .cmp(&history.accessed_unix(&args.network, &left.host_id))
+                    .accessed_unix(network, &right.host_id)
+                    .cmp(&history.accessed_unix(network, &left.host_id))
             })
             .then_with(|| left.alias().cmp(right.alias()))
     });
-    let choices = hosts
-        .iter()
-        .map(|host| HostChoice {
-            label: format!(
-                "{:<24}  {:<4}  {}",
-                host.alias(),
-                match host.mode {
-                    aegis_dto::AegisHostMode::Hub => "hub",
-                    aegis_dto::AegisHostMode::Leaf => "leaf",
-                },
-                host.host_label()
-            ),
-            endpoint: list::SshReachabilityTarget::from_host(host),
-        })
-        .collect::<Vec<_>>();
-    let index = ui::screen(|screen| choose_host(screen, choices))?;
-    Ok(hosts[index].alias().to_string())
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -150,15 +149,7 @@ fn prepare_direct_endpoint(screen: &ui::Screen) -> Result<PreparedDirectSession>
     let choices = targets
         .iter()
         .map(|target| HostChoice {
-            label: format!(
-                "{:<24}  {:<4}  {}",
-                target.aliases.primary(),
-                match target.mode {
-                    aegis_dto::AegisHostMode::Hub => "hub",
-                    aegis_dto::AegisHostMode::Leaf => "leaf",
-                },
-                target.wireguard_ipv4
-            ),
+            host: host_list::listed_direct_target(target),
             endpoint: list::SshReachabilityTarget {
                 ipv4: Some(target.wireguard_ipv4.clone()),
                 ipv6: Some(target.wireguard_ipv6.clone()),
@@ -305,25 +296,31 @@ fn select_direct_login_principal(
             target.aliases.primary()
         );
     }
-    if principals.len() == 1 {
-        return Ok(principals.remove(0));
-    }
-    let index = choose("Login", &principals)?;
-    Ok(principals.swap_remove(index))
+    choose_login_principal(&principals)
+}
+
+pub(super) fn choose_login_principal(principals: &[String]) -> Result<String> {
+    let index = choose("Login", principals)?;
+    Ok(principals[index].clone())
 }
 
 struct HostChoice {
-    label: String,
+    host: host_list::ListedHost,
     endpoint: list::SshReachabilityTarget,
 }
 
 fn choose_host(screen: &ui::Screen, choices: Vec<HostChoice>) -> Result<usize> {
+    let mut layout = host_list::HostListLayout::default();
+    for choice in &choices {
+        layout.include(&choice.host);
+    }
+    let target = ui::render_target();
     let options = ui::SelectOptions {
         prompt: "Connect to".into(),
         choices: choices
             .iter()
             .map(|choice| ui::Choice {
-                label: choice.label.clone(),
+                label: host_list::render_aligned_listed_host(&choice.host, &target, &layout),
                 status: ui::ChoiceStatus::Checking,
             })
             .collect(),
@@ -442,6 +439,7 @@ impl PreparedSshSession {
             args.no_server_cert,
         )
         .with_presentation_host(display_host.clone())
+        .with_interactive_login()
         .prepare_with_status(&mut api, handoff)?;
         let display_destination =
             connect::SshDestination::new(prepared.ssh_user(), &display_host, prepared.ssh_port())
@@ -725,6 +723,43 @@ mod tests {
         ANSI_BOLD_CYAN, ANSI_GREEN, ANSI_RESET, ANSI_YELLOW, connect, host,
         render_panel_destination,
     };
+
+    #[test]
+    fn saved_recency_survives_alias_changes_and_is_scoped_to_the_network() {
+        use super::{SshHistory, sort_recent_hosts};
+        use aegis_dto::{AegisHostMode, HostAliases, HostId};
+
+        let mut hosts = ["alpha", "bravo", "charlie", "hub"].map(|alias| {
+            let mut host = super::super::tests::sample_host();
+            host.host_id = HostId::new_v4();
+            host.aliases = HostAliases::new(vec![alias.parse().unwrap()]).unwrap();
+            host
+        });
+        hosts[3].host.mode = AegisHostMode::Hub;
+        let mut history = SshHistory::default();
+        history.accessed.insert(
+            "aegis".into(),
+            [
+                (hosts[1].host_id, 10),
+                (hosts[2].host_id, 20),
+                (hosts[3].host_id, 30),
+            ]
+            .into(),
+        );
+        let saved = serde_json::to_vec(&history).unwrap();
+        let history = serde_json::from_slice(&saved).unwrap();
+        hosts[2].aliases = HostAliases::new(vec!["renamed".parse().unwrap()]).unwrap();
+        sort_recent_hosts(&mut hosts, &history, "aegis");
+        assert_eq!(
+            hosts.each_ref().map(|host| host.alias().as_str()),
+            ["renamed", "bravo", "alpha", "hub"]
+        );
+        sort_recent_hosts(&mut hosts, &history, "another-network");
+        assert_eq!(
+            hosts.each_ref().map(|host| host.alias().as_str()),
+            ["alpha", "bravo", "renamed", "hub"]
+        );
+    }
 
     #[test]
     fn ssh_ui_uses_the_network_dns_name_as_its_logical_destination() {
