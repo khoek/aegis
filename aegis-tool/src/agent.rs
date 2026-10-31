@@ -5372,6 +5372,7 @@ pub(crate) fn disable_direct_gateway(config: &AegisDirectGatewayConfig) -> Resul
 }
 
 fn direct_gateway_sshd_dropin_contents(inventory: &DirectGatewayState) -> String {
+    // AuthenticationMethods excludes GSSAPI without relying on build-specific options.
     format!(
         "# Managed by aegis. Makes the direct-gateway interface certificate-only.\n\
          Match LocalAddress {ipv4},{ipv6}\n\
@@ -5380,7 +5381,6 @@ fn direct_gateway_sshd_dropin_contents(inventory: &DirectGatewayState) -> String
            PasswordAuthentication no\n\
            KbdInteractiveAuthentication no\n\
            ChallengeResponseAuthentication no\n\
-           GSSAPIAuthentication no\n\
            HostbasedAuthentication no\n\
            AuthorizedKeysFile none\n\
            DisableForwarding yes\n\
@@ -7749,6 +7749,7 @@ config_path = "/etc/bird/bird.conf"
         let sshd = direct_gateway_sshd_dropin_contents(&inventory);
         assert!(sshd.contains("Match LocalAddress 10.77.1.1,fd77::1:1"));
         assert!(sshd.contains("AuthenticationMethods publickey"));
+        assert!(!sshd.contains("GSSAPIAuthentication"));
         assert!(sshd.contains("AuthorizedKeysFile none"));
         assert!(sshd.contains("Group aegis-direct"));
         assert!(!sshd.contains("AuthorizedPrincipalsFile"));

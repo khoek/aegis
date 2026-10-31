@@ -24,18 +24,28 @@ pub(crate) fn remove_wireguard_access() -> Result<()> {
 }
 
 fn replace_wireguard_access(enabled: bool) -> Result<()> {
+    // Both profiles include the same file; the first update must not hide a
+    // policy change from the second profile's reload decision.
+    let shared_rules_changed = read_optional_text(Path::new(APPARMOR_WG_QUICK_AEGIS_RULES_PATH))?
+        .as_deref()
+        != Some(wireguard_rules_contents().as_str());
     for (profile, local) in [
         (APPARMOR_WG_QUICK_PROFILE_PATH, APPARMOR_WG_QUICK_LOCAL_PATH),
         ("/etc/apparmor.d/wg", "/etc/apparmor.d/local/wg"),
     ] {
         if Path::new(profile).exists() {
-            replace_profile_access(profile, local, enabled)?;
+            replace_profile_access(profile, local, enabled, shared_rules_changed)?;
         }
     }
     Ok(())
 }
 
-fn replace_profile_access(profile: &str, local: &str, enabled: bool) -> Result<()> {
+fn replace_profile_access(
+    profile: &str,
+    local: &str,
+    enabled: bool,
+    shared_rules_changed: bool,
+) -> Result<()> {
     let profile_path = Path::new(profile);
     let local_path = Path::new(local);
     let rules_path = Path::new(APPARMOR_WG_QUICK_AEGIS_RULES_PATH);
@@ -46,7 +56,7 @@ fn replace_profile_access(profile: &str, local: &str, enabled: bool) -> Result<(
 
     let local_changed = replace_optional_text(local_path, desired_local.as_deref(), 0o644)?;
     let rules_changed = replace_optional_text(rules_path, desired_rules.as_deref(), 0o644)?;
-    if !local_changed && !rules_changed {
+    if !local_changed && !rules_changed && !shared_rules_changed {
         return Ok(());
     }
     if !profile_path.exists() {
@@ -100,7 +110,12 @@ fn apparmor_local_contents(existing: Option<&str>, enabled: bool) -> Option<Stri
 }
 
 fn wireguard_rules_contents() -> String {
-    format!("# Managed by aegis.\n{WIREGUARD_DIRECTORY}/{{,**}} r,\n")
+    format!(
+        "# Managed by aegis.\n\
+         {WIREGUARD_DIRECTORY}/{{,**}} r,\n\
+         # The command runner backs private stdin with an anonymous file in /tmp.\n\
+         owner \"/tmp/#[0-9]*\" r,\n"
+    )
 }
 
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
@@ -187,6 +202,9 @@ EOF_AEGIS_APPARMOR_RULES\n\
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use std::{io::Write, path::Path, process::Command};
+
     use super::{
         WG_QUICK_AEGIS_INCLUDE, apparmor_local_contents, wireguard_access_install_shell,
         wireguard_rules_contents,
@@ -214,11 +232,79 @@ mod tests {
     fn apparmor_policy_is_narrow_and_shell_paths_match() {
         let rules = wireguard_rules_contents();
         assert_eq!(
-            "# Managed by aegis.\n/etc/aegis/wireguard/{,**} r,\n",
+            vec!["/etc/aegis/wireguard/{,**} r,", "owner \"/tmp/#[0-9]*\" r,"],
             rules
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .collect::<Vec<_>>()
         );
         let install = wireguard_access_install_shell();
         assert!(install.contains("/etc/apparmor.d/local/aegis-wg-quick"));
         assert!(install.contains("apparmor_parser"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires root, AppArmor and WireGuard; uses a dedicated profile and private network namespace"]
+    fn confined_wireguard_reads_private_stdin() {
+        assert_eq!(unsafe { libc::geteuid() }, 0, "this test requires root");
+        assert!(Path::new("/sys/kernel/security/apparmor").is_dir());
+
+        struct Profile(tempfile::NamedTempFile);
+        impl Drop for Profile {
+            fn drop(&mut self) {
+                let status = Command::new(super::APPARMOR_PARSER_PATH)
+                    .args(["--remove", "--skip-cache"])
+                    .arg(self.0.path())
+                    .status()
+                    .expect("remove the test AppArmor profile");
+                assert!(status.success(), "test AppArmor profile cleanup failed");
+            }
+        }
+
+        let name = format!("aegis-wg-stdin-test-{}", uuid::Uuid::new_v4().simple());
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            file,
+            "include <tunables/global>\n\
+             profile {name} flags=(attach_disconnected) {{\n\
+               include <abstractions/base>\n\
+               /usr/bin/wg mrix,\n\
+               capability net_admin,\n\
+               capability net_bind_service,\n\
+               network netlink raw,\n\
+               network inet dgram,\n\
+               network inet6 dgram,\n\
+               {}\n\
+             }}\n",
+            wireguard_rules_contents(),
+        )
+        .unwrap();
+        crate::command::require_success(
+            "load the test AppArmor profile",
+            Command::new(super::APPARMOR_PARSER_PATH)
+                .arg("--skip-cache")
+                .arg(file.path()),
+        )
+        .unwrap();
+        let _profile = Profile(file);
+        let output = crate::command::require_success_with_input(
+            "synchronize WireGuard under the generated AppArmor policy",
+            Command::new("/usr/bin/timeout").args([
+                "10s",
+                "/usr/bin/unshare",
+                "--net",
+                "/bin/bash",
+                "-euc",
+                "/usr/sbin/ip link add aegis-test type wireguard\n\
+                 /usr/bin/aa-exec -p \"$1\" -- /usr/bin/wg syncconf aegis-test /dev/stdin\n\
+                 /usr/bin/wg show aegis-test listen-port",
+                "aegis-apparmor-test",
+                &name,
+            ]),
+            b"[Interface]\nListenPort = 51820\n",
+        )
+        .unwrap();
+        assert_eq!(output.stdout.trim(), "51820");
     }
 }
