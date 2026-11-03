@@ -43,3 +43,18 @@ fn administration_is_a_separate_versioned_cli() {
     serde_json::from_str::<serde_json::Value>(&template.stdout).unwrap();
     assert!(!template.stderr.contains('\x1b'));
 }
+
+#[test]
+fn setup_accepts_a_validated_local_alias() {
+    let admin = env!("CARGO_BIN_EXE_aegis-admin");
+    let help = invoke(admin, &["setup", "--help"]);
+    assert!(help.stdout.contains("--name <NAME>"));
+    for name in ["Invalid Name", "a9b0c1d2-0000-4000-8000-000000000000", ""] {
+        let output = invoke(admin, &["setup", "--name", name]);
+        assert_eq!(output.status.code(), Some(2), "{}", output.stderr);
+        assert!(output.stderr.contains("host alias must use lowercase"));
+    }
+    let output = invoke(admin, &["setup", "--name", "laptop", "--no-enroll"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.contains("cannot be used with"));
+}

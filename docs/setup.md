@@ -25,6 +25,9 @@ identity and certificate authorities, a namespace, and Ubuntu hub VMs in the reg
 issues your user credential through local GCP access, signs you in, enrolls the
 current Ubuntu/systemd machine, and checks readiness. No OAuth client or browser
 configuration is required. Use `--no-enroll` for an operator-only computer.
+The current machine's alias defaults to its short hostname. If that hostname is
+invalid, setup prompts for a valid alias. Supply `--name ALIAS` to choose one
+explicitly, including when running without a terminal.
 
 Each hub is an `e2-medium` with a 30 GB disk and reserved public address. GCP bills
 these resources to your project. For unattended setup, complete the prerequisites

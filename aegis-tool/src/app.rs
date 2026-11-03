@@ -29,6 +29,7 @@ mod connect;
 mod control_plane;
 pub(crate) mod enroll_install;
 mod enroll_target;
+mod enrollment_alias;
 mod fleet;
 mod host;
 mod host_alias;
@@ -1522,12 +1523,7 @@ pub fn check_local_enrollment_platform() -> Result<()> {
 
 pub fn local_machine_alias() -> Result<HostAlias> {
     let system = rustix::system::uname();
-    let hostname = system
-        .nodename()
-        .to_str()
-        .context("system hostname is not UTF-8")?;
-    HostAlias::parse(hostname.split('.').next().unwrap_or(hostname))
-        .context("system hostname is not a valid Aegis alias")
+    enrollment_alias::select(system.nodename())
 }
 
 pub fn local_machine_ready(api_base: &str, expected: Option<&aegis_dto::HostId>) -> Result<bool> {

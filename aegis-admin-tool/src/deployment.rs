@@ -6,7 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use aegis_dto::{NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint};
+use aegis_dto::{
+    HostAlias, NamespaceId, NamespaceRole, identity::LoginConfiguration, namespace::ApiEndpoint,
+};
 use anyhow::{Context, Result, bail, ensure};
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -49,6 +51,9 @@ pub(super) struct SetupArgs {
     /// Skip enrolling this computer; the API, owner and hubs are still configured.
     #[arg(long)]
     no_enroll: bool,
+    /// Alias for this computer; defaults to its short hostname, prompting if invalid.
+    #[arg(long, conflicts_with = "no_enroll")]
+    name: Option<HostAlias>,
     #[arg(long)]
     remote_auth: bool,
     /// Accept the displayed resource plan. OAuth authorization, when enabled, remains interactive.
@@ -534,14 +539,14 @@ impl Deployment {
         super::hub::configure(self, &args.hub_regions, args.yes)?;
         self.complete("Regional hubs")?;
         if !args.no_enroll {
-            self.enroll_current_machine()?;
+            self.enroll_current_machine(args.name.as_ref())?;
             self.complete("Current machine")?;
         }
         self.check()?;
         Ok(())
     }
 
-    fn enroll_current_machine(&mut self) -> Result<()> {
+    fn enroll_current_machine(&mut self, name: Option<&HostAlias>) -> Result<()> {
         let _lock = aegis_tool::client::local_system_lock()?;
         let endpoint = self.namespace_endpoint()?;
         if aegis_tool::client::enrollment::local_machine_ready(&endpoint, self.local_host.as_ref())?
@@ -552,7 +557,10 @@ impl Deployment {
         let host = match self.local_host {
             Some(host) => host,
             None => {
-                let alias = aegis_tool::client::enrollment::local_machine_alias()?;
+                let alias = match name {
+                    Some(alias) => alias.clone(),
+                    None => aegis_tool::client::enrollment::local_machine_alias()?,
+                };
                 let enrollment = aegis_tool::client::enrollment::reserve(
                     &mut api,
                     alias,
