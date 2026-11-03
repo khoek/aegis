@@ -1,7 +1,7 @@
 use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
 use aegis_dto::platform::OperatingSystem;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 use anyhow::Context;
 use anyhow::{Result, ensure};
 
@@ -167,7 +167,11 @@ pub(crate) fn ensure_certificate_integration() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn sshd_supports_include() -> Result<bool> {
-    let output = run_capture(Command::new("/usr/sbin/sshd").arg("-V"))?;
+    openssh_supports_include(&run_capture(Command::new("/usr/sbin/sshd").arg("-V"))?)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn openssh_supports_include(output: &crate::command::CommandOutput) -> Result<bool> {
     let version = output
         .stderr
         .lines()
@@ -175,16 +179,17 @@ fn sshd_supports_include() -> Result<bool> {
         .flat_map(str::split_whitespace)
         .find_map(|word| word.strip_prefix("OpenSSH_"))
         .context("sshd -V did not report an OpenSSH version")?;
-    let mut components = version.split('.');
-    let major = components
-        .next()
-        .context("OpenSSH version omitted its major component")?
-        .parse::<u32>()?;
-    let minor = components
-        .next()
-        .context("OpenSSH version omitted its minor component")?
-        .trim_end_matches(|character: char| !character.is_ascii_digit())
-        .parse::<u32>()?;
+    let (major, minor) = version
+        .split_once('.')
+        .context("OpenSSH version omitted its minor component")?;
+    let major = major
+        .parse::<u32>()
+        .with_context(|| format!("invalid major component in OpenSSH version `{version}`"))?;
+    let minor = minor[..minor
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(minor.len())]
+        .parse::<u32>()
+        .with_context(|| format!("invalid minor component in OpenSSH version `{version}`"))?;
     Ok((major, minor) >= (8, 2))
 }
 
@@ -239,4 +244,66 @@ pub(crate) fn remove_certificate_integration() -> Result<()> {
         Err(error) => return Err(error.into()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+
+    use super::*;
+    use crate::command::CommandOutput;
+
+    fn version_output(version: &str, stdout: bool) -> CommandOutput {
+        CommandOutput {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: if stdout {
+                version.into()
+            } else {
+                String::new()
+            },
+            stderr: if stdout {
+                String::new()
+            } else {
+                version.into()
+            },
+        }
+    }
+
+    #[test]
+    fn include_support_accepts_openssh_patchlevels_and_vendor_versions() {
+        for (version, expected) in [
+            ("OpenSSH_9.9p2, LibreSSL 3.3.6\n", true),
+            ("OpenSSH_10.0p2, LibreSSL 3.3.6\n", true),
+            ("OpenSSH_9.7p1 Ubuntu-7ubuntu4.3, OpenSSL 3.0.13\n", true),
+            ("OpenSSH_8.2p1, LibreSSL 2.8.3\n", true),
+            ("OpenSSH_8.1p1, LibreSSL 2.7.3\n", false),
+            ("OpenSSH_7.9p1, LibreSSL 2.7.3\n", false),
+            ("OpenSSH_8.2, LibreSSL 2.8.3\n", true),
+            ("OpenSSH_8.1, LibreSSL 2.7.3\n", false),
+        ] {
+            for stdout in [false, true] {
+                assert_eq!(
+                    openssh_supports_include(&version_output(version, stdout))
+                        .unwrap_or_else(|error| panic!("{version}: {error:#}")),
+                    expected,
+                    "{version}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn include_support_rejects_missing_or_malformed_versions() {
+        for version in [
+            "",
+            "sshd: illegal option -- V\nusage: sshd [options]\n",
+            "OpenSSH_unknown, LibreSSL 3.3.6\n",
+            "OpenSSH_x.9p2, LibreSSL 3.3.6\n",
+            "OpenSSH_9.xp2, LibreSSL 3.3.6\n",
+            "OpenSSH_9., LibreSSL 3.3.6\n",
+            "OpenSSH_9.4294967296p1, LibreSSL 3.3.6\n",
+        ] {
+            assert!(openssh_supports_include(&version_output(version, false)).is_err());
+        }
+    }
 }

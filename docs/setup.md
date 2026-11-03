@@ -55,6 +55,42 @@ installation. `aegis-admin deploy` resolves the official image matching the inst
 admin release and deploys a ready revision before switching traffic. For custom
 builds, setup and deploy accept `--image IMAGE@sha256:DIGEST`.
 
+## Interrupted macOS bootstrap
+
+An initial enrollment can stop after installing the trusted system binary but
+before configuring the agent. When a newer release fixes that failure, setup
+refuses to replace the older system binary automatically.
+
+For a Mac that has never completed enrollment, this command removes only the
+bootstrap binary. It refuses to proceed if agent configuration, a launch daemon,
+local sockets, or a managed installation record exists:
+
+```sh
+sudo /bin/sh -ceu '
+for path in /etc/aegis/agent.toml \
+    /etc/ssh/aegis/state.toml \
+    /Library/LaunchDaemons/aegis-agent.plist \
+    /private/var/run/aegis-agent.sock \
+    /private/var/run/aegis-capulus.sock \
+    /private/var/lib/capulus/installations/aegis; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+        echo "Agent state exists at $path; use managed redeploy or explicit repair." >&2
+        exit 1
+    fi
+done
+if /bin/launchctl print system/aegis-agent >/dev/null 2>&1; then
+    echo "An Aegis agent is registered; use managed redeploy or explicit repair." >&2
+    exit 1
+fi
+rm -f /Library/PrivilegedHelperTools/aegis
+'
+```
+
+Update `aegis-admin-tool`, then rerun the same setup command. Keep the deployment
+receipt, enrollment invitation, and keys so setup resumes the reserved host.
+Existing agents upgrade through `aegis advanced redeploy` or
+`aegis advanced fleet redeploy`.
+
 ## Accounts and credentials
 
 `aegis-admin authorize` grants access and signs in the local GCP operator. Use
