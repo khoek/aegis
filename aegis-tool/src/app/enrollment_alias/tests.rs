@@ -80,6 +80,7 @@ fn invalid_hostnames_without_a_terminal_request_an_explicit_name() {
 struct TerminalChild {
     process: Child,
     master: File,
+    original: Termios,
 }
 
 impl TerminalChild {
@@ -101,6 +102,7 @@ impl TerminalChild {
         );
         let master = unsafe { File::from_raw_fd(master) };
         let slave = unsafe { File::from_raw_fd(slave) };
+        let original = termios::tcgetattr(&master).unwrap();
         let mut command = fixture_command("Zoes-MacBook.local");
         command
             .stdin(Stdio::from(slave.try_clone().unwrap()))
@@ -118,6 +120,26 @@ impl TerminalChild {
         Self {
             process: command.spawn().unwrap(),
             master,
+            original,
+        }
+    }
+
+    fn assert_terminal_restored(&self) {
+        let restored = termios::tcgetattr(&self.master).unwrap();
+        // The kernel may set PENDIN when canonical input resumes. It describes
+        // queued-input state, rather than a terminal setting owned by the prompt.
+        assert_eq!(
+            restored.local_modes.difference(LocalModes::PENDIN),
+            self.original.local_modes.difference(LocalModes::PENDIN)
+        );
+        assert_eq!(restored.input_modes, self.original.input_modes);
+        assert_eq!(restored.output_modes, self.original.output_modes);
+        assert_eq!(restored.control_modes, self.original.control_modes);
+        for code in [SpecialCodeIndex::VMIN, SpecialCodeIndex::VTIME] {
+            assert_eq!(
+                restored.special_codes[code],
+                self.original.special_codes[code]
+            );
         }
     }
 
@@ -163,12 +185,22 @@ fn invalid_hostname_prompts_and_rejects_invalid_answers() {
     child.read_until("host alias must use lowercase");
     child.master.write_all(b"zoes-macbook\r").unwrap();
     child.read_until("SELECTED=zoes-macbook");
+    child.assert_terminal_restored();
 }
 
 #[test]
 fn interrupting_the_alias_prompt_preserves_typed_cancellation() {
-    let mut child = TerminalChild::start();
-    child.read_until("Host alias for this computer");
-    child.master.write_all(b"\x03").unwrap();
-    child.read_until("CANCELLED");
+    for _ in 0..4 {
+        let mut child = TerminalChild::start();
+        child.read_until("Host alias for this computer");
+        let input = termios::tcgetattr(&child.master).unwrap();
+        assert!(
+            !input
+                .local_modes
+                .intersects(LocalModes::ICANON | LocalModes::ISIG)
+        );
+        child.master.write_all(b"\x03").unwrap();
+        child.read_until("CANCELLED");
+        child.assert_terminal_restored();
+    }
 }
