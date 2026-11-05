@@ -1,3 +1,4 @@
+mod ipv6;
 mod transport;
 
 use std::{
@@ -331,6 +332,7 @@ impl Session {
             .as_ref()
             .context("WireGuard identity missing")?;
         let mut peers = Vec::new();
+        let mut ipv6_interfaces = Vec::new();
         for peer in options.peers {
             let Some(wireguard) = &peer.wireguard else {
                 continue;
@@ -358,7 +360,6 @@ impl Session {
                 .mac_addr(ethernet.mac)
                 .mtu(mesh.overlay_mtu)
                 .ipv4(transit.local_ipv4, 30, None)
-                .ipv6(transit.local_ipv6, 127)
                 .enable(true)
                 .build_async()
                 .context("create native VXLAN Ethernet pair")?;
@@ -371,10 +372,12 @@ impl Session {
                 device.name()? == ethernet.interface,
                 "native Ethernet allocation changed its requested name"
             );
+            ipv6::add_address(&ethernet.interface, transit.local_ipv6, 127)?;
             // Strong-end IPv6 selection requires the stable address on each outgoing interface.
             for &address in &self.journal.internal {
                 add_alias(&ethernet.interface, address)?;
             }
+            ipv6_interfaces.push((ethernet.interface.clone(), transit.local_ipv6));
             peers.push((identity, device));
         }
         self.transport = Some(transport::Transport::start(transport::Options {
@@ -383,6 +386,10 @@ impl Session {
             mtu: mesh.overlay_mtu,
             peers,
         })?);
+        // Start forwarding before waiting so IPv6 duplicate-address probes can reach peers.
+        for (interface, address) in ipv6_interfaces {
+            ipv6::wait_ready(&interface, address)?;
+        }
         let configuration = babel::LeafOptions {
             mesh,
             internal,
