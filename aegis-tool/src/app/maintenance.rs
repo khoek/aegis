@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use aegis_dto::DEFAULT_AEGIS_NETWORK;
@@ -24,6 +25,8 @@ use super::{
 const LOCAL_REDEPLOY_WAIT_TIMEOUT: Duration = Duration::from_secs(40 * 60);
 const LOCAL_REDEPLOY_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const LOCAL_AGENT_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
+const USER_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const USER_VERSION_PROBE_OUTPUT_LIMIT: u64 = 4096;
 
 pub(super) struct RefreshCredentialsCommand<'a> {
     api_base_override: Option<&'a str>,
@@ -238,7 +241,47 @@ fn resolve_exact_release(
 }
 
 pub(super) fn user_program_requires_update(version: &RedeployVersion) -> Result<bool> {
-    Ok(user_program_update(version)?.is_some_and(|update| !update.is_current()))
+    if rustix::process::geteuid().is_root() {
+        return Ok(false);
+    }
+    user_program_requires_update_at(version, capulus::managed::current_user_cargo_root()?)
+}
+
+fn user_program_requires_update_at(version: &RedeployVersion, cargo_root: PathBuf) -> Result<bool> {
+    if user_program_update_at(version, cargo_root.clone())?.is_none() {
+        return Ok(false);
+    }
+    Ok(!user_program_is_current(
+        &cargo_root.join("bin/aegis"),
+        version,
+        USER_VERSION_PROBE_TIMEOUT,
+    )?)
+}
+
+fn user_program_is_current(
+    binary: &Path,
+    version: &RedeployVersion,
+    timeout: Duration,
+) -> Result<bool> {
+    // Bound the child and its descendants through the shared process runner,
+    // without requiring an external platform-specific timeout executable.
+    let output = capulus::process::CaptureOptions {
+        timeout,
+        max_output_bytes: USER_VERSION_PROBE_OUTPUT_LIMIT,
+        cancellation: ui::cancellation(),
+    }
+    .validate()?
+    .run(Command::new(binary).arg("--version"), None);
+    match output {
+        Ok(output) => {
+            let expected = version.to_string();
+            Ok(output.status.success()
+                && output.stdout.split_whitespace().last() == Some(expected.as_str()))
+        }
+        Err(error) if capulus::error_is_cancelled(&error) => Err(error),
+        // An unknown installed version must not suppress a requested update.
+        Err(_) => Ok(false),
+    }
 }
 
 fn install_user_program(version: &RedeployVersion) -> Result<()> {
@@ -484,13 +527,15 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(!user_program_requires_update_at(&version, cargo_root.clone()).unwrap());
         assert!(!cargo_root.exists());
         std::fs::create_dir_all(cargo_root.join("bin")).unwrap();
         assert!(
-            user_program_update_at(&version, cargo_root)
+            user_program_update_at(&version, cargo_root.clone())
                 .unwrap()
                 .is_none()
         );
+        assert!(!user_program_requires_update_at(&version, cargo_root).unwrap());
     }
 
     #[test]
@@ -501,13 +546,57 @@ mod tests {
         std::fs::write(&binary, "#!/bin/sh\necho aegis 1.2.3\n").unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         for (version, current) in [("1.2.3", true), ("1.2.4", false)] {
-            let update = user_program_update_at(
+            let requires_update = user_program_requires_update_at(
                 &RedeployVersion::explicit(version).unwrap(),
                 directory.path().to_path_buf(),
             )
-            .unwrap()
             .unwrap();
-            assert_eq!(update.is_current(), current);
+            assert_eq!(requires_update, !current);
         }
+    }
+
+    #[test]
+    fn failed_malformed_and_oversized_user_versions_require_an_update() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("bin/aegis");
+        std::fs::create_dir(binary.parent().unwrap()).unwrap();
+        let version = RedeployVersion::explicit("1.2.3").unwrap();
+        for body in [
+            "echo aegis 1.2.3; exit 1",
+            "echo aegis 1.2.3 >&2",
+            "echo unknown-version",
+            "printf '%5000s' x; echo ' aegis 1.2.3'",
+            "printf '\\377'; echo ' aegis 1.2.3'",
+        ] {
+            std::fs::write(&binary, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(
+                user_program_requires_update_at(&version, directory.path().to_path_buf()).unwrap(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hung_user_version_probe_is_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("aegis");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf started > \"$0.started\"\nexec sleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+        assert!(
+            !user_program_is_current(
+                &binary,
+                &RedeployVersion::explicit("1.2.3").unwrap(),
+                Duration::from_secs(1),
+            )
+            .unwrap()
+        );
+        assert!(directory.path().join("aegis.started").exists());
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }

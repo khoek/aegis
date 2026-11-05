@@ -44,6 +44,10 @@ package versions, and results here. Cross-compilation is not acceptance.
   CPU, packet loss, and reconvergence rather than assuming kernel-like performance.
 - Reboot, sleep/wake, switch Wi-Fi/Ethernet, change the underlay address, and
   disconnect/reconnect. Check for abandoned interfaces, workers, sockets, and routes.
+- Check that every owned `feth` IPv6 address finishes duplicate-address detection.
+  A persistent `tentative` address also prevents mDNSResponder from applying DNS
+  changes. Verify system hostname resolution after boot and network changes, not
+  only direct DNS queries or the contents of `scutil --dns`.
 
 ## Managed lifecycle
 
@@ -75,3 +79,16 @@ AEGIS_TEST_BABELD=/absolute/path/to/babeld cargo test -p aegis-tool \
 ```
 
 It supplies directives with `-C` and exits with `-V` before kernel initialization.
+
+The macOS IPv6 regression test requires root and creates a temporary,
+nonpersistent `feth` pair. Build the library test executable as the ordinary user
+with `cargo test -p aegis-tool --lib --locked --no-run`, then run that executable
+with `sudo` and these arguments:
+
+```sh
+agent::macos::ipv6::tests::native_transit_ipv6_finishes_duplicate_address_detection --ignored --exact
+```
+
+It verifies the production transit-address setup and readiness check, then checks
+that both temporary interfaces were removed. It does not start an agent or modify
+existing mesh interfaces.
