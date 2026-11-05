@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
 use aegis_dto::DEFAULT_AEGIS_NETWORK;
-use anyhow::{Context, Result, anyhow, bail};
-use capulus::managed::{UserProgramUpdateOptions, VersionTarget};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use capulus::managed::VersionTarget;
 
 use crate::api::AuthenticatedApiClient;
 use crate::cli::{
@@ -25,6 +25,7 @@ use super::{
 const LOCAL_REDEPLOY_WAIT_TIMEOUT: Duration = Duration::from_secs(40 * 60);
 const LOCAL_REDEPLOY_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const LOCAL_AGENT_RESTART_TIMEOUT: Duration = Duration::from_secs(90);
+const USER_PROGRAM_INSTALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const USER_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const USER_VERSION_PROBE_OUTPUT_LIMIT: u64 = 4096;
 
@@ -119,6 +120,7 @@ impl<'a> RedeployCommand<'a> {
     }
 
     pub(super) fn run(&self) -> Result<i32> {
+        let platform = crate::platform::detect()?;
         let schedule = ui::task(TaskOptions {
             label: "Preparing Aegis release from crates.io".to_string(),
             deadline: Some(Duration::from_secs(60 * 60)),
@@ -153,10 +155,10 @@ impl<'a> RedeployCommand<'a> {
                 return Err(error);
             }
         }
-        schedule.set_phase("asking the local agent to start the systemd job");
+        schedule.set_phase("asking the local agent to start the managed redeploy job");
         let response = local_agent::schedule_redeploy(&target_version.to_string())?;
         let target_version_text = target_version.to_string();
-        let job = RedeployJob::new(response.unit.clone(), response.job.clone())?;
+        let job = RedeployJob::new(platform, response.unit.clone(), response.job.clone())?;
         let schedule_message = if response.started {
             format!(
                 "Scheduled aegis redeploy via transient Capulus unit {} (target version {}).",
@@ -248,7 +250,7 @@ pub(super) fn user_program_requires_update(version: &RedeployVersion) -> Result<
 }
 
 fn user_program_requires_update_at(version: &RedeployVersion, cargo_root: PathBuf) -> Result<bool> {
-    if user_program_update_at(version, cargo_root.clone())?.is_none() {
+    if existing_user_program_at(cargo_root.clone())?.is_none() {
         return Ok(false);
     }
     Ok(!user_program_is_current(
@@ -285,40 +287,86 @@ fn user_program_is_current(
 }
 
 fn install_user_program(version: &RedeployVersion) -> Result<()> {
-    if let Some(update) = user_program_update(version)? {
-        ui::suspend(|| update.install(ui::current().cancellation()))?;
+    if rustix::process::geteuid().is_root() {
+        return Ok(());
+    }
+    if let Some(root) = existing_user_program_at(capulus::managed::current_user_cargo_root()?)? {
+        ui::suspend(|| install_user_program_at(version, &root))?;
     }
     Ok(())
 }
 
-fn user_program_update(
-    version: &RedeployVersion,
-) -> Result<Option<capulus::managed::UserProgramUpdate>> {
-    if rustix::process::geteuid().is_root() {
-        return Ok(None);
+fn install_user_program_at(version: &RedeployVersion, cargo_root: &Path) -> Result<()> {
+    ensure!(
+        !rustix::process::geteuid().is_root(),
+        "a user CLI update must not run as root"
+    );
+    let capture = capulus::process::CaptureOptions {
+        timeout: USER_PROGRAM_INSTALL_TIMEOUT,
+        cancellation: ui::cancellation(),
+        ..Default::default()
     }
-    user_program_update_at(version, capulus::managed::current_user_cargo_root()?)
+    .validate()?;
+    let build = tempfile::Builder::new()
+        .prefix("aegis-user-build-")
+        .tempdir_in(cargo_root)
+        .context("create temporary user CLI build directory")?;
+    // Cargo's location is independent of the installation root (for example,
+    // Homebrew Cargo with a CLI installed under ~/.cargo). Use the invoking PATH.
+    let result = capture
+        .run_streaming(
+            Command::new("cargo")
+                .args(["install", "--locked", "--force", "--version"])
+                .arg(version.to_string())
+                .args([
+                    "aegis-tool",
+                    "--bin",
+                    "aegis",
+                    "--registry",
+                    "crates-io",
+                    "--root",
+                ])
+                .arg(cargo_root)
+                .arg("--target-dir")
+                .arg(build.path())
+                .env("CARGO_TARGET_DIR", build.path()),
+            None,
+        )
+        .and_then(|output| {
+            ensure!(
+                output.status.success(),
+                "Cargo failed to install aegis v{version}: {}",
+                output.status
+            );
+            Ok(())
+        });
+    let location = build.path().display().to_string();
+    match (result, build.close()) {
+        (result, Ok(())) => result,
+        (Ok(()), Err(error)) => Err(error).with_context(|| format!(
+            "user CLI was installed, but temporary build output could not be removed from {location}"
+        )),
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "temporary build output could not be removed from {location}: {cleanup}"
+        ))),
+    }
 }
 
-fn user_program_update_at(
-    version: &RedeployVersion,
-    cargo_root: PathBuf,
-) -> Result<Option<capulus::managed::UserProgramUpdate>> {
+fn existing_user_program_at(cargo_root: PathBuf) -> Result<Option<PathBuf>> {
+    ensure!(
+        cargo_root.is_absolute()
+            && cargo_root != Path::new("/")
+            && !cargo_root.components().any(|part| matches!(
+                part,
+                Component::ParentDir | Component::CurDir | Component::Prefix(_)
+            )),
+        "user CLI installation root must be a normalized absolute path"
+    );
     match std::fs::symlink_metadata(cargo_root.join("bin/aegis")) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("failed to inspect the user Aegis installation"),
+        Ok(_) => Ok(Some(cargo_root)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("failed to inspect the user Aegis installation"),
     }
-    UserProgramUpdateOptions {
-        package: "aegis-tool".to_string(),
-        cargo_binary: "aegis".to_string(),
-        version: version.to_string(),
-        registry: Some("crates-io".into()),
-        cargo_root,
-        timeout: Duration::from_secs(60 * 60),
-    }
-    .validate()
-    .map(Some)
 }
 
 pub(super) fn redeploy_status(args: &RedeployStatusArgs) -> Result<i32> {
@@ -363,7 +411,7 @@ fn wait_for_local_redeploy(job: &RedeployJob, target_version: &str) -> Result<()
         }
         if Instant::now() >= deadline {
             task.abandon(format!(
-                "Timed out; systemd unit {} may still be running",
+                "Timed out; managed redeploy job {} may still be running",
                 job.unit()
             ));
             bail!(
@@ -373,12 +421,12 @@ fn wait_for_local_redeploy(job: &RedeployJob, target_version: &str) -> Result<()
         }
         if let Err(error) = ui::sleep(LOCAL_REDEPLOY_PROBE_INTERVAL) {
             task.abandon(format!(
-                "Wait interrupted; systemd unit {} continues independently",
+                "Wait interrupted; managed redeploy job {} continues independently",
                 job.unit()
             ));
             return Err(error).with_context(|| {
                 format!(
-                    "redeploy wait interrupted; systemd unit {} continues independently",
+                    "redeploy wait interrupted; managed redeploy job {} continues independently",
                     job.unit()
                 )
             });
@@ -518,12 +566,97 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn user_install_fixture() {
+        let Some(root) = std::env::var_os("AEGIS_TEST_USER_INSTALL_ROOT") else {
+            return;
+        };
+        match install_user_program_at(
+            &RedeployVersion::explicit("1.2.3").unwrap(),
+            Path::new(&root),
+        ) {
+            Ok(()) => eprintln!("INSTALLED"),
+            Err(error) => eprintln!("INSTALL_FAILED={error:#}"),
+        }
+    }
+
+    #[test]
+    fn user_install_finds_cargo_on_path_and_cleans_build_output() {
+        for exit in [0, 7] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("user-install");
+            let toolchain = directory.path().join("toolchain");
+            std::fs::create_dir_all(root.join("bin")).unwrap();
+            std::fs::create_dir(&toolchain).unwrap();
+            std::fs::write(root.join("bin/aegis"), "old CLI").unwrap();
+            let cargo = toolchain.join("cargo");
+            std::fs::write(
+                &cargo,
+                r#"#!/bin/sh
+printf '%s\n' "$@" > "$AEGIS_TEST_USER_INSTALL_RECORD/args"
+printf '%s' "$CARGO_TARGET_DIR" > "$AEGIS_TEST_USER_INSTALL_RECORD/target"
+printf artifact > "$CARGO_TARGET_DIR/artifact"
+if test "$AEGIS_TEST_USER_INSTALL_EXIT" = 0; then
+  printf 'new CLI' > "$AEGIS_TEST_USER_INSTALL_ROOT/bin/aegis"
+fi
+exit "$AEGIS_TEST_USER_INSTALL_EXIT"
+"#,
+            )
+            .unwrap();
+            std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let paths = std::env::join_paths(std::iter::once(toolchain).chain(
+                std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+            ))
+            .unwrap();
+            let output = capulus::process::CaptureOptions::default()
+                .validate()
+                .unwrap()
+                .run(
+                    Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "app::maintenance::tests::user_install_fixture",
+                            "--exact",
+                            "--nocapture",
+                        ])
+                        .env("PATH", paths)
+                        .env("AEGIS_TEST_USER_INSTALL_ROOT", &root)
+                        .env("AEGIS_TEST_USER_INSTALL_RECORD", directory.path())
+                        .env("AEGIS_TEST_USER_INSTALL_EXIT", exit.to_string()),
+                    None,
+                )
+                .unwrap();
+            assert!(output.status.success(), "{}", output.stderr);
+            assert!(
+                output.stderr.contains(if exit == 0 {
+                    "INSTALLED"
+                } else {
+                    "INSTALL_FAILED"
+                }),
+                "{}",
+                output.stderr
+            );
+            assert!(!root.join("bin/cargo").exists());
+            let args = std::fs::read_to_string(directory.path().join("args")).unwrap();
+            assert!(args.contains("--locked\n"));
+            assert!(args.contains("--version\n1.2.3\n"));
+            assert!(args.contains(&format!("--root\n{}\n", root.display())));
+            let build =
+                PathBuf::from(std::fs::read_to_string(directory.path().join("target")).unwrap());
+            assert!(build.starts_with(&root));
+            assert!(!build.exists());
+            assert_eq!(
+                std::fs::read_to_string(root.join("bin/aegis")).unwrap(),
+                if exit == 0 { "new CLI" } else { "old CLI" }
+            );
+        }
+    }
+
+    #[test]
     fn managed_system_users_do_not_need_a_cargo_installation() {
         let directory = tempfile::tempdir().unwrap();
         let cargo_root = directory.path().join(".cargo");
         let version = RedeployVersion::explicit("1.2.3").unwrap();
         assert!(
-            user_program_update_at(&version, cargo_root.clone())
+            existing_user_program_at(cargo_root.clone())
                 .unwrap()
                 .is_none()
         );
@@ -531,7 +664,7 @@ mod tests {
         assert!(!cargo_root.exists());
         std::fs::create_dir_all(cargo_root.join("bin")).unwrap();
         assert!(
-            user_program_update_at(&version, cargo_root.clone())
+            existing_user_program_at(cargo_root.clone())
                 .unwrap()
                 .is_none()
         );

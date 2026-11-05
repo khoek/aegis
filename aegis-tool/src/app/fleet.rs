@@ -868,6 +868,10 @@ impl Target {
         target_version: &RedeployVersion,
         update_remote_user: bool,
     ) -> Result<RedeployJob> {
+        let platform = match self {
+            Self::Local => crate::platform::detect()?,
+            Self::Remote(remote) => remote.prepared.host().host.platform,
+        };
         let response = match self {
             Self::Local => local_agent::schedule_redeploy(&target_version.to_string())?,
             Self::Remote(remote) => {
@@ -881,7 +885,7 @@ impl Target {
                 target_version
             );
         }
-        RedeployJob::new(response.unit, response.job)
+        RedeployJob::new(platform, response.unit, response.job)
     }
 
     fn probe_version(&mut self, target_version: &RedeployVersion) -> agent_version::ProbeResult {
